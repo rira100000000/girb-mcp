@@ -118,17 +118,25 @@ module GirbMcp
 
               # Set initial breakpoints and continue past the line-1 stop
               bp_results = []
+              deferred_bps = []
               if has_initial_bps
                 breakpoints.each do |bp|
                   bp_cmd = bp.start_with?("catch ") ? bp : "break #{bp}"
                   bp_output = client.send_command(bp_cmd)
-                  bp_results << { spec: bp, output: bp_output.lines.first&.strip }
-                  manager.record_breakpoint(bp_cmd)
+                  first_line = bp_output.lines.first&.strip || ""
+
+                  if first_line.include?("Unknown") || first_line.include?("not found")
+                    # Class not defined yet at line 1 — defer until after continue
+                    deferred_bps << { spec: bp, cmd: bp_cmd, reason: first_line }
+                  else
+                    bp_results << { spec: bp, output: first_line }
+                    manager.record_breakpoint(bp_cmd)
+                  end
                 rescue GirbMcp::Error => e
                   bp_results << { spec: bp, error: e.message }
                 end
 
-                # Continue past the initial line-1 stop
+                # Continue past the initial line-1 stop (loads class definitions)
                 begin
                   initial_output = client.send_continue
                   initial_output, skipped = skip_internal_code(client, initial_output) unless skipped
@@ -138,6 +146,18 @@ module GirbMcp
                     "Program finished before hitting any breakpoint.", e.final_output, client,
                   )
                   return MCP::Tool::Response.new([{ type: "text", text: text }])
+                end
+
+                # Retry deferred breakpoints now that classes should be defined.
+                # Don't continue again — the program is already stopped at a useful
+                # point (debugger statement or an immediate breakpoint).
+                deferred_bps.each do |db|
+                  bp_output = client.send_command(db[:cmd])
+                  first_line = bp_output.lines.first&.strip || ""
+                  bp_results << { spec: db[:spec], output: first_line, deferred: true }
+                  manager.record_breakpoint(db[:cmd])
+                rescue GirbMcp::Error => e
+                  bp_results << { spec: db[:spec], error: e.message }
                 end
               end
 
@@ -164,14 +184,16 @@ module GirbMcp
                 bp_results.each do |r|
                   text += if r[:error]
                     "\n  #{r[:spec]} -> Error: #{r[:error]}"
+                  elsif r[:deferred]
+                    "\n  #{r[:spec]} -> #{r[:output]} (set after class loaded)"
                   else
                     "\n  #{r[:spec]} -> #{r[:output]}"
                   end
                 end
               end
 
-              # Restore breakpoints from previous sessions
-              restored = manager.restore_breakpoints(client)
+              # Restore breakpoints from previous sessions (skip when initial BPs were provided)
+              restored = has_initial_bps ? [] : manager.restore_breakpoints(client)
               if restored.any?
                 text += "\n\nRestored #{restored.size} breakpoint(s) from previous session:"
                 restored.each do |r|
