@@ -58,12 +58,14 @@ module GirbMcp
       else
         # run_script session: session is over, guide toward restart
         tip = "This debug session has ended."
+        rerun_hint = build_rerun_hint(client)
         if exception_info
-          tip += " To debug the crash, use 'run_script' to restart the script" \
-                 " and set_breakpoint(exception_class: '#{exception_info.split(":").first}') " \
-                 "to catch the exception before it crashes."
+          exc_class = exception_info.split(":").first
+          tip += "\n\nTo debug the crash:\n" \
+                 "  1. #{rerun_hint}\n" \
+                 "  2. set_breakpoint(exception_class: '#{exc_class}') to catch the exception before it crashes"
         else
-          tip += " Use 'run_script' to restart the script if needed."
+          tip += "\n\nTo restart: #{rerun_hint}"
         end
         parts << tip
       end
@@ -80,6 +82,15 @@ module GirbMcp
       client.wait_thread.value
     rescue StandardError
       nil
+    end
+
+    # Build a concrete run_script hint with the exact file/args from the session.
+    def build_rerun_hint(client)
+      script_file = client&.script_file
+      return "run_script(file: '...', restore_breakpoints: true)" unless script_file
+
+      args_part = client.script_args&.any? ? ", args: #{client.script_args.inspect}" : ""
+      "run_script(file: '#{script_file}'#{args_part}, restore_breakpoints: true)"
     end
 
     # Detect Ruby exception from output text.

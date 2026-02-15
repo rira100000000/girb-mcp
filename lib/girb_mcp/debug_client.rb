@@ -14,7 +14,7 @@ module GirbMcp
     ANSI_ESCAPE = /\e\[[0-9;]*m/
 
     attr_reader :pid, :connected
-    attr_accessor :stderr_file, :stdout_file, :wait_thread
+    attr_accessor :stderr_file, :stdout_file, :wait_thread, :script_file, :script_args
 
     def initialize
       @socket = nil

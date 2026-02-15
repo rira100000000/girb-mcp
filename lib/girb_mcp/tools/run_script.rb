@@ -105,11 +105,13 @@ module GirbMcp
               result = manager.connect(host: "localhost", port: debug_port)
               connected = true
 
-              # Store stdout/stderr file paths on the client for post-mortem diagnostics
+              # Store metadata on the client for post-mortem diagnostics and rerun
               client = manager.client(result[:session_id])
               client.stdout_file = stdout_path
               client.stderr_file = stderr_path
               client.wait_thread = wait_thread
+              client.script_file = file
+              client.script_args = args
 
               initial_output = result[:output]
 
@@ -129,7 +131,8 @@ module GirbMcp
                     # Class not defined yet at line 1 — defer until after continue
                     deferred_bps << { spec: bp, cmd: bp_cmd, reason: first_line }
                   else
-                    bp_results << { spec: bp, output: first_line }
+                    display = first_line.include?("duplicated") ? "Already set (reused existing)" : first_line
+                    bp_results << { spec: bp, output: display }
                     manager.record_breakpoint(bp_cmd)
                   end
                 rescue GirbMcp::Error => e
@@ -154,7 +157,8 @@ module GirbMcp
                 deferred_bps.each do |db|
                   bp_output = client.send_command(db[:cmd])
                   first_line = bp_output.lines.first&.strip || ""
-                  bp_results << { spec: db[:spec], output: first_line, deferred: true }
+                  display = first_line.include?("duplicated") ? "Already set (reused existing)" : first_line
+                  bp_results << { spec: db[:spec], output: display, deferred: true }
                   manager.record_breakpoint(db[:cmd])
                 rescue GirbMcp::Error => e
                   bp_results << { spec: db[:spec], error: e.message }

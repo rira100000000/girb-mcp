@@ -6,6 +6,8 @@ module GirbMcp
   module Tools
     class Finish < MCP::Tool
       description "[Control] Run until the current method or block returns, then pause. " \
+                  "After finish, execution stops at the CALLER's frame (the line that invoked the method). " \
+                  "The line shown with => has already been executed. " \
                   "This exits the current block/method entirely — for iterators like each/map, " \
                   "this skips ALL remaining iterations. " \
                   "To skip to just the NEXT ITERATION instead, use set_breakpoint with one_shot: true " \
@@ -37,7 +39,8 @@ module GirbMcp
           output = GirbMcp::StopEventAnnotator.annotate_breakpoint_hit(output)
           output = GirbMcp::StopEventAnnotator.enrich_stop_context(output, client)
 
-          MCP::Tool::Response.new([{ type: "text", text: output }])
+          header = "Method/block returned (stopped at caller's frame)."
+          MCP::Tool::Response.new([{ type: "text", text: "#{header}\n\n#{output}" }])
         rescue GirbMcp::SessionError => e
           text = if e.message.include?("session ended") || e.message.include?("finished execution")
             GirbMcp::ExitMessageBuilder.build_exit_message("Program exited during finish.", e.final_output, client)

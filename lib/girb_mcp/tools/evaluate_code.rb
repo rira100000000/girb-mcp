@@ -62,10 +62,13 @@ module GirbMcp
             if err_info
               text = "Error: #{err_info}"
               text += "\n\nDebugger output:\n#{output}" if output && !output.strip.empty? && output.strip != "nil"
+              text += "\n\nCaptured stdout:\n#{captured}" if captured
+            elsif captured
+              # Label both sections when stdout is present to avoid confusion
+              text = "Return value:\n#{output}\n\nCaptured stdout:\n#{captured}"
             else
               text = output
             end
-            text += "\n\nCaptured stdout:\n#{captured}" if captured
             MCP::Tool::Response.new([{ type: "text", text: text }])
           rescue GirbMcp::TimeoutError => e
             MCP::Tool::Response.new([{ type: "text", text: "Error: #{e.message}\n\n" \
