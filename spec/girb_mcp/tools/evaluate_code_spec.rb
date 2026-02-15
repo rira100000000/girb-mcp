@@ -1,0 +1,115 @@
+# frozen_string_literal: true
+
+RSpec.describe GirbMcp::Tools::EvaluateCode do
+  let(:client) { build_mock_client }
+  let(:manager) { build_mock_manager(client: client) }
+  let(:server_context) { { session_manager: manager } }
+
+  describe ".call" do
+    before do
+      # Default: stdout redirect succeeds, no error, empty captured stdout
+      allow(client).to receive(:send_command).and_return("")
+    end
+
+    it "evaluates code and returns result" do
+      allow(client).to receive(:send_command).with(/\$__girb_err=nil; pp/).and_return("=> 42")
+      allow(client).to receive(:send_command).with("p $__girb_err").and_return("=> nil")
+      allow(client).to receive(:send_command).with("p $__girb_cap.string").and_return('=> ""')
+
+      response = described_class.call(code: "1 + 1", server_context: server_context)
+      text = response_text(response)
+      expect(text).to include("42")
+    end
+
+    it "handles evaluation error" do
+      allow(client).to receive(:send_command).with(/\$__girb_err=nil; pp/).and_return("=> nil")
+      allow(client).to receive(:send_command).with("p $__girb_err").and_return(
+        '=> "NameError: undefined local variable \'x\'"'
+      )
+      allow(client).to receive(:send_command).with("p $__girb_cap.string").and_return('=> ""')
+
+      response = described_class.call(code: "x", server_context: server_context)
+      text = response_text(response)
+      expect(text).to include("Error:")
+      expect(text).to include("NameError")
+    end
+
+    it "captures stdout output" do
+      allow(client).to receive(:send_command).with(/\$__girb_err=nil; pp/).and_return("=> nil")
+      allow(client).to receive(:send_command).with("p $__girb_err").and_return('=> nil')
+      allow(client).to receive(:send_command).with("p $__girb_cap.string").and_return(
+        '=> "hello world\n"'
+      )
+
+      response = described_class.call(code: 'puts "hello world"', server_context: server_context)
+      text = response_text(response)
+      expect(text).to include("Captured stdout:")
+      expect(text).to include("hello world")
+    end
+
+    it "propagates session error from client lookup" do
+      allow(manager).to receive(:client).and_raise(
+        GirbMcp::SessionError, "No active session"
+      )
+
+      # EvaluateCode's client lookup is outside the begin/rescue block,
+      # so the SessionError propagates to the MCP framework.
+      expect {
+        described_class.call(code: "1", server_context: server_context)
+      }.to raise_error(GirbMcp::SessionError, /No active session/)
+    end
+
+    it "handles timeout error" do
+      allow(client).to receive(:send_command).with(/\$__girb_err=nil; pp/).and_raise(
+        GirbMcp::TimeoutError, "Timeout after 15s"
+      )
+
+      response = described_class.call(code: "sleep(100)", server_context: server_context)
+      text = response_text(response)
+      expect(text).to include("Timeout")
+    end
+
+    it "restores stdout on error" do
+      allow(client).to receive(:send_command).with(/\$__girb_err=nil; pp/).and_raise(
+        GirbMcp::ConnectionError, "lost"
+      )
+
+      response = described_class.call(code: "x", server_context: server_context)
+      text = response_text(response)
+      expect(text).to include("Error:")
+    end
+
+    it "suspends and restores catch breakpoints" do
+      bp_info = "#1  BP - Catch  \"NoMethodError\"\n#2  BP - Line  file.rb:10"
+      allow(client).to receive(:send_command).with("info break").and_return(bp_info)
+      allow(client).to receive(:send_command).with("delete 1").and_return("")
+      allow(client).to receive(:send_command).with("catch NoMethodError").and_return("")
+      allow(client).to receive(:send_command).with(/\$__girb_err=nil; pp/).and_return("=> 42")
+      allow(client).to receive(:send_command).with("p $__girb_err").and_return('=> nil')
+      allow(client).to receive(:send_command).with("p $__girb_cap.string").and_return('=> ""')
+
+      described_class.call(code: "1 + 1", server_context: server_context)
+
+      expect(client).to have_received(:send_command).with("delete 1")
+      expect(client).to have_received(:send_command).with("catch NoMethodError")
+    end
+
+    it "uses Base64 encoding for multi-line code" do
+      allow(client).to receive(:send_command).with(/Base64/).and_return("=> 3")
+      allow(client).to receive(:send_command).with("p $__girb_err").and_return('=> nil')
+      allow(client).to receive(:send_command).with("p $__girb_cap.string").and_return('=> ""')
+
+      described_class.call(code: "a = 1\na + 2", server_context: server_context)
+      expect(client).to have_received(:send_command).with(/Base64/)
+    end
+
+    it "uses Base64 encoding for non-ASCII code" do
+      allow(client).to receive(:send_command).with(/Base64/).and_return('=> "hello"')
+      allow(client).to receive(:send_command).with("p $__girb_err").and_return('=> nil')
+      allow(client).to receive(:send_command).with("p $__girb_cap.string").and_return('=> ""')
+
+      described_class.call(code: 'puts "日本語"', server_context: server_context)
+      expect(client).to have_received(:send_command).with(/Base64/)
+    end
+  end
+end
