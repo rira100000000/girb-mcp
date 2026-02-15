@@ -95,8 +95,8 @@ module GirbMcp
         def build_eval_command(code)
           if code.include?("\n") || !code.ascii_only?
             encoded = Base64.strict_encode64(code.encode(Encoding::UTF_8))
-            "$__girb_err=nil; pp(begin; " \
-            "eval(Base64.decode64('#{encoded}').force_encoding('UTF-8'), binding); " \
+            "$__girb_err=nil; pp(begin; require 'base64'; " \
+            "eval(::Base64.decode64('#{encoded}').force_encoding('UTF-8'), binding); " \
             'rescue => __e; $__girb_err="#{__e.class}: #{__e.message}"; nil; end)'
           else
             "$__girb_err=nil; pp(begin; (#{code}); " \

@@ -54,8 +54,9 @@ module GirbMcp
           # Check if there are still active sessions
           still_active = manager.active_sessions.select { |s| s[:connected] }
 
-          # Clear saved breakpoints unless explicitly restoring
-          manager.clear_breakpoint_specs unless restore_breakpoints
+          # Clear saved breakpoints unless explicitly restoring.
+          # Explicit breakpoints parameter takes precedence over restore.
+          manager.clear_breakpoint_specs if !restore_breakpoints || breakpoints&.any?
 
           unless File.exist?(file)
             return MCP::Tool::Response.new([{ type: "text", text: "Error: File not found: #{file}" }])
