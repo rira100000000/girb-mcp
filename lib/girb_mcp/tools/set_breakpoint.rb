@@ -5,14 +5,15 @@ require "mcp"
 module GirbMcp
   module Tools
     class SetBreakpoint < MCP::Tool
-      description "[Control] Set a breakpoint at a file and line number, or catch an exception class. " \
-                  "For line breakpoints: provide file + line. Execution will pause when the line is reached. " \
-                  "Use a condition to break only when specific criteria are met " \
-                  "(e.g., condition: \"user.id == 1\"). " \
-                  "Use one_shot: true for breakpoints that should fire only once and auto-remove themselves " \
-                  "(useful inside blocks/loops to avoid repeated stops on every iteration). " \
-                  "For exception breakpoints: provide exception_class (e.g., 'NoMethodError') to pause " \
-                  "execution when that exception is raised, BEFORE it crashes the process."
+      description "[Control] Set a breakpoint. Three modes are available:\n" \
+                  "1. Line breakpoint: provide file + line. Pauses when the line is reached. " \
+                  "Use condition to break only when criteria are met (e.g., condition: \"user.id == 1\"). " \
+                  "Use one_shot: true to fire only once and auto-remove (useful in loops/blocks).\n" \
+                  "2. Method breakpoint: provide method (e.g., 'DataPipeline#validate', 'User.find'). " \
+                  "Pauses when the method is called. Use 'Class#method' for instance methods, " \
+                  "'Class.method' for class methods. No need to know the file or line number.\n" \
+                  "3. Exception breakpoint: provide exception_class (e.g., 'NoMethodError') to pause " \
+                  "when that exception is raised, BEFORE it crashes the process."
 
       input_schema(
         properties: {
@@ -24,6 +25,12 @@ module GirbMcp
             type: "integer",
             description: "Line number to break at. Required for line breakpoints.",
           },
+          method: {
+            type: "string",
+            description: "Method name to break on (e.g., 'DataPipeline#validate' for instance method, " \
+                         "'User.find' for class method). Pauses when the method is called. " \
+                         "No need to know the file path or line number.",
+          },
           exception_class: {
             type: "string",
             description: "Exception class to catch (e.g., 'NoMethodError', 'RuntimeError', 'ArgumentError'). " \
@@ -32,13 +39,13 @@ module GirbMcp
           },
           condition: {
             type: "string",
-            description: "Optional condition expression for line breakpoints (e.g., 'user.id == 1')",
+            description: "Optional condition expression for line/method breakpoints (e.g., 'user.id == 1')",
           },
           one_shot: {
             type: "boolean",
             description: "If true, the breakpoint fires only once and is automatically removed after " \
                          "the first hit. Useful for stopping inside a block/loop without repeated stops. " \
-                         "Only applies to line breakpoints.",
+                         "Applies to line and method breakpoints.",
           },
           session_id: {
             type: "string",
@@ -48,17 +55,20 @@ module GirbMcp
       )
 
       class << self
-        def call(file: nil, line: nil, exception_class: nil, condition: nil, one_shot: nil, session_id: nil, server_context:)
+        def call(file: nil, line: nil, method: nil, exception_class: nil, condition: nil, one_shot: nil, session_id: nil, server_context:)
           manager = server_context[:session_manager]
           client = manager.client(session_id)
 
           if exception_class
             set_catch_breakpoint(client, manager, exception_class)
+          elsif method
+            set_method_breakpoint(client, manager, method, condition: condition, one_shot: one_shot)
           elsif file && line
             set_line_breakpoint(client, manager, file, line, condition: condition, one_shot: one_shot)
           else
             MCP::Tool::Response.new([{ type: "text",
               text: "Error: Provide 'file' + 'line' for a line breakpoint, " \
+                    "'method' for a method breakpoint (e.g., 'User#save'), " \
                     "or 'exception_class' for an exception breakpoint." }])
           end
         rescue GirbMcp::Error => e
@@ -79,6 +89,26 @@ module GirbMcp
 
           if one_shot
             # Parse breakpoint number from output like "#3  BP - Line  /path:47"
+            if (match = output.match(/#(\d+)/))
+              bp_num = match[1].to_i
+              client.register_one_shot(bp_num)
+              output += "\n(one-shot: will be auto-removed after first hit)"
+            end
+          end
+
+          MCP::Tool::Response.new([{ type: "text", text: output }])
+        end
+
+        def set_method_breakpoint(client, manager, method, condition: nil, one_shot: nil)
+          command = "break #{method}"
+          command += " if: #{condition}" if condition
+
+          output = client.send_command(command)
+          output = GirbMcp::StopEventAnnotator.annotate_breakpoint_set(output)
+
+          manager.record_breakpoint(command) unless one_shot
+
+          if one_shot
             if (match = output.match(/#(\d+)/))
               bp_num = match[1].to_i
               client.register_one_shot(bp_num)

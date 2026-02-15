@@ -7,8 +7,12 @@ module GirbMcp
     class GetContext < MCP::Tool
       description "[Investigation] Get the full execution context of the paused Ruby process: " \
                   "current source location, local variables, instance variables, call stack, " \
-                  "and breakpoints. Call this after connecting to understand where execution stopped and why. " \
-                  "Note: Variable values may be truncated in the summary. " \
+                  "and breakpoints. " \
+                  "Best used: (1) after connecting/run_script to understand the initial state, " \
+                  "(2) after continue_execution hits a breakpoint to see variable values, " \
+                  "(3) when you need to check what breakpoints are set. " \
+                  "Not needed after every next/step — those already include source listing in their output. " \
+                  "Note: Variable values may be truncated. " \
                   "Use 'evaluate_code' or 'inspect_object' for full details on specific variables."
 
       input_schema(

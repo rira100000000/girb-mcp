@@ -120,6 +120,16 @@ module GirbMcp
       nil
     end
 
+    # Check if the spawned process has exited.
+    # Waits briefly to allow the process to finish cleanup.
+    # Only meaningful for run_script sessions (wait_thread is nil for connect sessions).
+    def process_finished?(timeout: 1)
+      return false unless wait_thread
+
+      wait_thread.join(timeout)
+      !wait_thread.alive?
+    end
+
     # Register a breakpoint number as one-shot (auto-remove after first hit)
     def register_one_shot(bp_number)
       @one_shot_breakpoints.add(bp_number)
@@ -244,8 +254,10 @@ module GirbMcp
 
       output_lines.join("\n")
     rescue Timeout::Error
-      # If we got some output before timeout, return it
-      if output_lines.any?
+      # If we got meaningful output before timeout, return it.
+      # Filter out empty lines to avoid treating blank `out` messages as real output.
+      meaningful_output = output_lines.reject { |l| l.strip.empty? }
+      if meaningful_output.any?
         output_lines.join("\n")
       else
         raise TimeoutError, "Timeout after #{timeout}s waiting for debugger response. " \

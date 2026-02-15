@@ -43,6 +43,7 @@ module GirbMcp
     RETURN_EVENTS = %w[return b_return c_return].freeze
 
     STOP_EVENT_PATTERN = /BP - \w+\s+.+\((\w+)\)/
+    CATCH_BREAKPOINT_PATTERN = /BP - Catch\s+"([^"]+)"/
 
     module_function
 
@@ -57,12 +58,14 @@ module GirbMcp
     end
 
     # Enrich output with runtime context from the debug client.
+    # At catch breakpoints: fetches exception class and message.
     # At return events: fetches __return_value__ and $! to distinguish
     # normal return from exception unwinding.
     # At all events: checks $! for in-scope exceptions.
     def enrich_stop_context(output, client)
       event = detect_stop_event(output)
       at_return = event && RETURN_EVENTS.include?(event)
+      at_catch = output&.match?(CATCH_BREAKPOINT_PATTERN)
 
       parts = [output]
 
@@ -82,7 +85,9 @@ module GirbMcp
       # Check for exception in scope ($!)
       exception_info = client.check_current_exception
       if exception_info
-        if at_return
+        if at_catch
+          parts << "Caught exception: #{exception_info}"
+        elsif at_return
           parts << "Exception in scope: #{exception_info}\n" \
                    "This method/block is returning due to an exception, not a normal return. " \
                    "The return value above may be nil or meaningless."

@@ -114,6 +114,32 @@ module GirbMcp
       end
     end
 
+    # Clean up sessions whose target process has died or whose socket has disconnected.
+    # Returns an array of cleaned-up session info hashes.
+    def cleanup_dead_sessions
+      cleaned = []
+
+      @mutex.synchronize do
+        dead_sids = @sessions.each_with_object([]) do |(sid, info), acc|
+          unless process_alive?(info.client.pid) && info.client.connected?
+            acc << sid
+          end
+        end
+
+        dead_sids.each do |sid|
+          info = @sessions.delete(sid)
+          cleaned << { session_id: sid, pid: info.client.pid }
+          info.client.disconnect
+        end
+
+        if dead_sids.include?(@default_session_id)
+          @default_session_id = @sessions.keys.first
+        end
+      end
+
+      cleaned
+    end
+
     # List active sessions with timing info
     def active_sessions
       @mutex.synchronize do

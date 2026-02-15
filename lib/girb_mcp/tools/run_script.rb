@@ -42,6 +42,11 @@ module GirbMcp
         def call(file:, args: [], port: nil, restore_breakpoints: nil, server_context:)
           manager = server_context[:session_manager]
 
+          # Clean up dead sessions from previous runs
+          cleaned = manager.cleanup_dead_sessions
+          # Check if there are still active sessions
+          still_active = manager.active_sessions.select { |s| s[:connected] }
+
           # Clear saved breakpoints unless explicitly restoring
           manager.clear_breakpoint_specs unless restore_breakpoints
 
@@ -98,8 +103,20 @@ module GirbMcp
               # Auto-skip if stopped at internal Ruby code (e.g., bundled_gems.rb due to SIGURG)
               initial_output, skipped = skip_internal_code(client, initial_output)
 
-              text = "Script started (PID: #{pid}) and connected via port #{debug_port}.\n" \
-                     "Session ID: #{result[:session_id]}"
+              session_notes = []
+              if cleaned.any?
+                session_notes << "Cleaned up #{cleaned.size} previous session(s): " \
+                                 "#{cleaned.map { |c| c[:session_id] }.join(", ")}"
+              end
+              if still_active.any?
+                session_notes << "Note: #{still_active.size} other session(s) still active " \
+                                 "(#{still_active.map { |s| s[:session_id] }.join(", ")})"
+              end
+
+              text = ""
+              text += session_notes.join("\n") + "\n\n" if session_notes.any?
+              text += "Script started (PID: #{pid}) and connected via port #{debug_port}.\n" \
+                      "Session ID: #{result[:session_id]}"
               text += "\n(auto-skipped internal code stop)" if skipped
               text += "\n\n#{initial_output}"
 

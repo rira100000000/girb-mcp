@@ -28,6 +28,17 @@ module GirbMcp
           client = server_context[:session_manager].client(session_id)
 
           output = client.send_continue
+
+          # The debug gem may send an `input` prompt just before the process exits
+          # (e.g., on a return event from the main script). When output is empty,
+          # check if the process has actually exited.
+          if output.strip.empty? && client.process_finished?
+            text = GirbMcp::ExitMessageBuilder.build_exit_message(
+              "Program finished execution.", output, client,
+            )
+            return MCP::Tool::Response.new([{ type: "text", text: text }])
+          end
+
           client.cleanup_one_shot_breakpoints(output)
           output = GirbMcp::StopEventAnnotator.annotate_breakpoint_hit(output)
           output = GirbMcp::StopEventAnnotator.enrich_stop_context(output, client)
