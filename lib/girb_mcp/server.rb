@@ -70,6 +70,8 @@ module GirbMcp
       - When variables or call stack context would help decide the next debugging action
       - You do NOT need get_context after every next/step if the output already shows \
       the information you need (source listing and stop location are included in the response)
+      - For a quick breakpoint check without fetching all context, use \
+      run_debug_command(command: "info breakpoints")
     TEXT
 
     def initialize(transport: nil, port: nil, host: nil, session_timeout: nil, **_)

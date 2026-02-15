@@ -41,9 +41,8 @@ module GirbMcp
       parts << "Program output (stdout):\n#{stdout}" if stdout
       parts << "Process stderr:\n#{stderr}" if stderr
 
-      # If no stdout/stderr captured (connect session without temp files),
-      # give actionable guidance
       if stdout.nil? && stderr.nil?
+        # Connect session: no captured output, guide toward run_script
         tip = "stdout/stderr are not captured for sessions started with 'connect'."
         if exception_info
           tip += "\nCheck the terminal where the debug process was started for the full stack trace."
@@ -55,6 +54,17 @@ module GirbMcp
                "  - Use 'run_script' instead of 'connect' to capture stdout/stderr automatically\n" \
                "  - Use set_breakpoint(exception_class: 'NoMethodError') to stop BEFORE " \
                "an exception crashes the process"
+        parts << tip
+      else
+        # run_script session: session is over, guide toward restart
+        tip = "This debug session has ended."
+        if exception_info
+          tip += " To debug the crash, use 'run_script' to restart the script" \
+                 " and set_breakpoint(exception_class: '#{exception_info.split(":").first}') " \
+                 "to catch the exception before it crashes."
+        else
+          tip += " Use 'run_script' to restart the script if needed."
+        end
         parts << tip
       end
 
