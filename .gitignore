@@ -1,0 +1,9 @@
+plan.md
+.mcp.json
+.claude/
+.ruby-lsp/
+/.bundle/
+/vendor/
+/tmp/
+*.gem
+Gemfile.lock

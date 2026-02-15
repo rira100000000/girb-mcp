@@ -1,0 +1,39 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+require "girb_mcp"
+require "optparse"
+
+options = {}
+
+OptionParser.new do |opts|
+  opts.banner = "Usage: girb-mcp [options]"
+
+  opts.on("-t", "--transport TRANSPORT", %w[stdio http], "Transport type: stdio (default) or http") do |t|
+    options[:transport] = t
+  end
+
+  opts.on("-p", "--port PORT", Integer, "HTTP port (default: 6029, only for http transport)") do |p|
+    options[:port] = p
+  end
+
+  opts.on("--host HOST", "HTTP host (default: 127.0.0.1, only for http transport)") do |h|
+    options[:host] = h
+  end
+
+  opts.on("--session-timeout SECONDS", Integer, "Session timeout in seconds (default: 1800)") do |t|
+    options[:session_timeout] = t
+  end
+
+  opts.on("-v", "--version", "Show version") do
+    puts "girb-mcp #{GirbMcp::VERSION}"
+    exit
+  end
+
+  opts.on("-h", "--help", "Show this help") do
+    puts opts
+    exit
+  end
+end.parse!
+
+GirbMcp::Server.new(**options).start
