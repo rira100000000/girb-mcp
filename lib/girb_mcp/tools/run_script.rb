@@ -69,7 +69,7 @@ module GirbMcp
           stderr_tmpfile.close
 
           pid = spawn(*cmd, out: stdout_path, err: stderr_path)
-          Process.detach(pid)
+          wait_thread = Process.detach(pid)
 
           # Wait for the debug server to be ready
           connected = false
@@ -91,6 +91,7 @@ module GirbMcp
               client = manager.client(result[:session_id])
               client.stdout_file = stdout_path
               client.stderr_file = stderr_path
+              client.wait_thread = wait_thread
 
               initial_output = result[:output]
 

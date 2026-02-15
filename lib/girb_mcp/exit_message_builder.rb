@@ -8,13 +8,30 @@ module GirbMcp
     # Parses stderr and debugger output to determine whether the program
     # exited normally or due to an unhandled exception.
     def build_exit_message(header, final_output, client)
+      # Wait for the process to fully exit so all output is flushed to files.
+      # wait_thread is set by run_script; nil for connect sessions.
+      exit_status = wait_for_process(client)
+
       stderr = client&.read_stderr_output
       stdout = client&.read_stdout_output
 
       # Try to detect exception from stderr first, then fall back to debugger output
       exception_info = detect_exception(stderr) || detect_exception(final_output)
 
-      parts = [header]
+      parts = []
+
+      # Build a clear header with exit status
+      if exit_status
+        if exit_status.success?
+          parts << "#{header}\nExit status: 0 (success)"
+        elsif exit_status.signaled?
+          parts << "#{header}\nKilled by signal #{exit_status.termsig}"
+        else
+          parts << "#{header}\nExit status: #{exit_status.exitstatus} (error)"
+        end
+      else
+        parts << header
+      end
 
       if exception_info
         parts << "Unhandled exception: #{exception_info}"
@@ -42,6 +59,17 @@ module GirbMcp
       end
 
       parts.join("\n\n")
+    end
+
+    # Wait for the spawned process to exit (up to 5 seconds).
+    # Returns Process::Status or nil.
+    def wait_for_process(client)
+      return nil unless client&.wait_thread
+
+      client.wait_thread.join(5)
+      client.wait_thread.value
+    rescue StandardError
+      nil
     end
 
     # Detect Ruby exception from output text.
