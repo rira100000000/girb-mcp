@@ -5,12 +5,14 @@ require "mcp"
 module GirbMcp
   module Tools
     class Connect < MCP::Tool
-      description "[Entry Point] Connect to a running Ruby debug session. " \
-                  "Call this first to start debugging. If only one session exists, " \
-                  "connects automatically. You can specify a TCP port (e.g., port: 12345) " \
-                  "or a Unix socket path. After connecting, use 'get_context' to see the current state. " \
+      description "[Entry Point] Connect to an already-running Ruby debug session " \
+                  "(e.g., a Rails server or background process started with 'rdbg --open'). " \
+                  "For debugging scripts, prefer 'run_script' which also captures stdout/stderr. " \
+                  "If only one session exists, connects automatically. " \
+                  "You can specify a TCP port (e.g., port: 12345) or a Unix socket path. " \
+                  "After connecting, use 'get_context' to see the current state. " \
                   "Previous session breakpoints are NOT restored by default (use restore_breakpoints: true to restore). " \
-                  "Note: stdout/stderr are NOT captured for connect sessions — use run_script if you need output capture."
+                  "Note: stdout/stderr are NOT captured for connect sessions."
 
       input_schema(
         properties: {

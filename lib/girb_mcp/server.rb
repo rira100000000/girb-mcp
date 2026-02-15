@@ -56,7 +56,8 @@ module GirbMcp
       or inspect the state of a running process.
 
       Typical workflow:
-      1. connect (or run_script) to attach to a Ruby debug session
+      1. run_script to launch a Ruby script under the debugger (recommended — captures stdout/stderr). \
+      Use connect only when attaching to an already-running process (e.g., Rails server).
       2. get_context to see the current state (variables, call stack, breakpoints)
       3. evaluate_code / inspect_object to investigate specific values
       4. set_breakpoint / next / step / continue_execution to control the flow
