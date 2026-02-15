@@ -18,6 +18,7 @@ require_relative "tools/run_debug_command"
 require_relative "tools/run_script"
 require_relative "tools/trigger_request"
 require_relative "tools/list_paused_sessions"
+require_relative "tools/disconnect"
 
 module GirbMcp
   class Server
@@ -40,6 +41,7 @@ module GirbMcp
       Tools::Next,
       Tools::Finish,
       Tools::RunDebugCommand,
+      Tools::Disconnect,
       # Entry points
       Tools::RunScript,
       Tools::TriggerRequest,
