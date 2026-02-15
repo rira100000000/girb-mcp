@@ -47,6 +47,8 @@ module GirbMcp
             # Evaluate user code (pp formats the return value)
             # The debug gem protocol is line-based, so multi-line code must be
             # encoded into a single line to avoid breaking the protocol.
+            # The code is wrapped in begin/rescue to capture exceptions in
+            # $__girb_err, allowing us to distinguish errors from normal nil.
             output = client.send_command(build_eval_command(code))
 
             # Restore $stdout and read captured output
@@ -54,7 +56,15 @@ module GirbMcp
             stdout_redirected = false
             captured = read_captured_stdout(client)
 
-            text = output
+            # Check if evaluation raised an exception
+            err_info = read_eval_error(client)
+
+            if err_info
+              text = "Error: #{err_info}"
+              text += "\n\nDebugger output:\n#{output}" if output && !output.strip.empty? && output.strip != "nil"
+            else
+              text = output
+            end
             text += "\n\nCaptured stdout:\n#{captured}" if captured
             MCP::Tool::Response.new([{ type: "text", text: text }])
           rescue GirbMcp::TimeoutError => e
@@ -75,18 +85,36 @@ module GirbMcp
         private
 
         # Build a debug command that evaluates the given code.
+        # The code is wrapped in begin/rescue to capture exceptions in
+        # $__girb_err. On error, the rescue returns nil (which pp shows),
+        # but the error is preserved in the global variable for structured
+        # error reporting.
         # Base64-encoding is used when the code contains newlines (the debug
         # gem protocol is line-based) or non-ASCII characters (to avoid
-        # encoding conflicts on the socket). `binding` is passed to eval()
-        # to preserve access to local/instance variables in the current
-        # debug frame.
+        # encoding conflicts on the socket).
         def build_eval_command(code)
           if code.include?("\n") || !code.ascii_only?
             encoded = Base64.strict_encode64(code.encode(Encoding::UTF_8))
-            "pp require 'base64'; eval(Base64.decode64('#{encoded}').force_encoding('UTF-8'), binding)"
+            "$__girb_err=nil; pp(begin; " \
+            "eval(Base64.decode64('#{encoded}').force_encoding('UTF-8'), binding); " \
+            'rescue => __e; $__girb_err="#{__e.class}: #{__e.message}"; nil; end)'
           else
-            "pp #{code}"
+            "$__girb_err=nil; pp(begin; (#{code}); " \
+            'rescue => __e; $__girb_err="#{__e.class}: #{__e.message}"; nil; end)'
           end
+        end
+
+        # Check $__girb_err for a captured exception from the eval wrapper.
+        # Returns "ClassName: message" string, or nil if no error.
+        def read_eval_error(client)
+          result = client.send_command("p $__girb_err")
+          cleaned = result.strip.sub(/\A=> /, "")
+          return nil if cleaned == "nil" || cleaned.empty?
+
+          cleaned = cleaned[1..-2] if cleaned.start_with?('"') && cleaned.end_with?('"')
+          cleaned.empty? ? nil : cleaned
+        rescue GirbMcp::Error
+          nil
         end
 
         def read_captured_stdout(client)
