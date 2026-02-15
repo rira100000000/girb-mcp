@@ -7,12 +7,10 @@ module GirbMcp
     class ContinueExecution < MCP::Tool
       description "[Control] Resume execution of the paused Ruby process. " \
                   "Continues until the next breakpoint is hit or the program finishes. " \
-                  "If the program exits (normally or due to an unhandled exception), " \
-                  "the final output including any exception details will be returned. " \
+                  "If the program exits, the final output including any exception details will be returned. " \
                   "Use 'finish' to run until the current method/block returns instead. " \
                   "Tip: To catch exceptions before they crash the process, use " \
-                  "set_breakpoint(exception_class: 'NoMethodError') before continuing. " \
-                  "After resuming, use 'get_context' to see where execution stopped next."
+                  "set_breakpoint(exception_class: 'NoMethodError') before continuing."
 
       input_schema(
         properties: {

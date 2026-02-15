@@ -7,10 +7,10 @@ module GirbMcp
   module Tools
     class RunScript < MCP::Tool
       description "[Entry Point] Launch a Ruby script under the debugger and automatically connect to it. " \
-                  "The script starts and pauses at breakpoints. Use 'set_breakpoint' beforehand to " \
-                  "control where it stops, or use 'binding.break' in the source code. " \
+                  "The script starts and pauses at breakpoints or 'binding.break' in the source. " \
+                  "Use breakpoints parameter to set initial breakpoints before execution starts " \
+                  "(e.g., breakpoints: ['User#save', 'app/models/user.rb:10']). " \
                   "This is the easiest way to start debugging a script from scratch. " \
-                  "Previous session breakpoints are NOT restored by default. " \
                   "Use restore_breakpoints: true to re-run with the same breakpoints after a crash."
 
       input_schema(
@@ -28,6 +28,13 @@ module GirbMcp
             type: "integer",
             description: "TCP port for debug connection (auto-assigned if omitted)",
           },
+          breakpoints: {
+            type: "array",
+            items: { type: "string" },
+            description: "Breakpoints to set before execution starts. Each entry is a breakpoint spec: " \
+                         "'file.rb:10' for line, 'Class#method' for method, or 'catch ExceptionClass' for exception. " \
+                         "The script pauses at line 1, breakpoints are set, then execution continues.",
+          },
           restore_breakpoints: {
             type: "boolean",
             description: "If true, restores breakpoints saved from previous sessions. " \
@@ -39,7 +46,7 @@ module GirbMcp
       )
 
       class << self
-        def call(file:, args: [], port: nil, restore_breakpoints: nil, server_context:)
+        def call(file:, args: [], port: nil, breakpoints: nil, restore_breakpoints: nil, server_context:)
           manager = server_context[:session_manager]
 
           # Clean up dead sessions from previous runs
@@ -60,9 +67,14 @@ module GirbMcp
               "Error: 'rdbg' command not found. Install the debug gem: gem install debug" }])
           end
 
-          # Start rdbg with --open so we can connect to it
+          # Start rdbg with --open so we can connect to it.
+          # When initial breakpoints are specified, omit --nonstop so the program
+          # pauses at line 1, giving us time to set breakpoints before execution.
           debug_port = port || find_available_port
-          cmd = ["rdbg", "--open", "--port=#{debug_port}", "--nonstop", "--", file, *args]
+          has_initial_bps = breakpoints&.any?
+          cmd = ["rdbg", "--open", "--port=#{debug_port}"]
+          cmd << "--nonstop" unless has_initial_bps
+          cmd += ["--", file, *args]
 
           # Capture stdout/stderr to temp files for post-mortem diagnostics
           stdout_tmpfile = Tempfile.create(["girb-mcp-stdout-", ".log"])
@@ -103,6 +115,31 @@ module GirbMcp
               # Auto-skip if stopped at internal Ruby code (e.g., bundled_gems.rb due to SIGURG)
               initial_output, skipped = skip_internal_code(client, initial_output)
 
+              # Set initial breakpoints and continue past the line-1 stop
+              bp_results = []
+              if has_initial_bps
+                breakpoints.each do |bp|
+                  bp_cmd = bp.start_with?("catch ") ? bp : "break #{bp}"
+                  bp_output = client.send_command(bp_cmd)
+                  bp_results << { spec: bp, output: bp_output.lines.first&.strip }
+                  manager.record_breakpoint(bp_cmd)
+                rescue GirbMcp::Error => e
+                  bp_results << { spec: bp, error: e.message }
+                end
+
+                # Continue past the initial line-1 stop
+                begin
+                  initial_output = client.send_continue
+                  initial_output, skipped = skip_internal_code(client, initial_output) unless skipped
+                rescue GirbMcp::SessionError => e
+                  # Program exited before hitting any breakpoint
+                  text = GirbMcp::ExitMessageBuilder.build_exit_message(
+                    "Program finished before hitting any breakpoint.", e.final_output, client,
+                  )
+                  return MCP::Tool::Response.new([{ type: "text", text: text }])
+                end
+              end
+
               session_notes = []
               if cleaned.any?
                 session_notes << "Cleaned up #{cleaned.size} previous session(s): " \
@@ -119,6 +156,18 @@ module GirbMcp
                       "Session ID: #{result[:session_id]}"
               text += "\n(auto-skipped internal code stop)" if skipped
               text += "\n\n#{initial_output}"
+
+              # Show initial breakpoint results
+              if bp_results.any?
+                text += "\n\nSet #{bp_results.size} initial breakpoint(s):"
+                bp_results.each do |r|
+                  text += if r[:error]
+                    "\n  #{r[:spec]} -> Error: #{r[:error]}"
+                  else
+                    "\n  #{r[:spec]} -> #{r[:output]}"
+                  end
+                end
+              end
 
               # Restore breakpoints from previous sessions
               restored = manager.restore_breakpoints(client)
