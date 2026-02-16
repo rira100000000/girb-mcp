@@ -111,6 +111,21 @@ rdbg --open --port=12345 --nonstop -- examples/03_recursion.rb
 
 ---
 
+## Rails デバッグシナリオ
+
+Rails アプリケーションのデバッグシナリオは [RAILS_SCENARIOS.md](RAILS_SCENARIOS.md) を参照。
+
+- シナリオ5: `rails_info` でアプリ概要を把握
+- シナリオ6: `rails_routes` でルーティング確認
+- シナリオ7: `rails_model` でモデル構造確認
+- シナリオ8: `trigger_request` のCSRF自動スキップ
+- シナリオ9: `trigger_request` のCookie/セッション管理
+- シナリオ10: レスポンス整形（JSON/HTML/リダイレクト）
+- シナリオ11: ブレークポイント + `trigger_request` 統合デバッグ
+- シナリオ12: Railsツール連携の総合テスト
+
+---
+
 ## 共通のツール使い方ヒント
 
 | やりたいこと | ツール | 例 |

@@ -3,6 +3,8 @@
 require "mcp"
 require "net/http"
 require "uri"
+require "json"
+require_relative "../rails_helper"
 
 module GirbMcp
   module Tools
@@ -12,7 +14,10 @@ module GirbMcp
       description "[Entry Point] Send an HTTP request to a Rails app running under the debugger. " \
                   "If a breakpoint is set, execution pauses there and you can inspect the state. " \
                   "If no breakpoint is hit, the HTTP response is returned. " \
-                  "Use this with 'set_breakpoint' to debug specific Rails controller actions."
+                  "Use this with 'set_breakpoint' to debug specific Rails controller actions. " \
+                  "IMPORTANT: This tool automatically resumes the paused process before sending the request. " \
+                  "You do NOT need to call 'continue_execution' first — just set your breakpoints, then call this tool. " \
+                  "For non-GET requests to Rails, CSRF protection is automatically disabled during the request."
 
       input_schema(
         properties: {
@@ -31,7 +36,15 @@ module GirbMcp
           },
           body: {
             type: "string",
-            description: "Request body (for POST/PUT/PATCH)",
+            description: "Request body (for POST/PUT/PATCH). JSON bodies are auto-detected.",
+          },
+          cookies: {
+            type: "object",
+            description: "Cookies to send as key-value pairs (e.g., {\"_session_id\": \"abc123\"})",
+          },
+          skip_csrf: {
+            type: "boolean",
+            description: "Control CSRF handling: true=always disable, false=never disable, omit=auto-detect Rails",
           },
           timeout: {
             type: "integer",
@@ -46,74 +59,247 @@ module GirbMcp
       )
 
       class << self
-        def call(method:, url:, headers: {}, body: nil, timeout: nil, session_id: nil, server_context:)
+        def call(method:, url:, headers: {}, body: nil, cookies: nil, skip_csrf: nil,
+                 timeout: nil, session_id: nil, server_context:)
           manager = server_context[:session_manager]
           timeout_sec = timeout || DEFAULT_TIMEOUT
 
-          # Send the HTTP request in a separate thread
-          response_holder = { done: false, response: nil, error: nil }
-          request_thread = Thread.new do
-            response_holder[:response] = send_http_request(method, url, headers, body, timeout_sec)
-            response_holder[:done] = true
-          rescue StandardError => e
-            response_holder[:error] = e
-            response_holder[:done] = true
+          # Auto-detect Content-Type if body is present and no Content-Type header set
+          headers = (headers || {}).dup
+          if body && !headers.any? { |k, _| k.to_s.downcase == "content-type" }
+            headers["Content-Type"] = detect_content_type(body)
           end
 
-          # If we have a connected debug session, check if a breakpoint is hit
+          # Build Cookie header from cookies hash
+          if cookies && !cookies.empty?
+            cookie_str = cookies.map { |k, v| "#{k}=#{v}" }.join("; ")
+            existing = headers.find { |k, _| k.to_s.downcase == "cookie" }
+            if existing
+              headers[existing[0]] = "#{existing[1]}; #{cookie_str}"
+            else
+              headers["Cookie"] = cookie_str
+            end
+          end
+
+          # CSRF handling: disable forgery protection for non-GET requests on Rails
+          csrf_disabled = false
+          client = nil
           begin
             client = manager.client(session_id)
-            # The debug session might pause at a breakpoint triggered by our request.
-            # We check by trying to read from the socket with a timeout.
-            # If the debugger sends new output (breakpoint hit), we report it.
-            # Otherwise, we wait for the HTTP response.
-
-            # Wait a moment for potential breakpoint hit
-            sleep 0.5
-
-            if !response_holder[:done] && client.connected?
-              text = "HTTP #{method} #{url} sent.\n" \
-                     "The request is in progress. The debug session is active.\n" \
-                     "Use 'get_context' to check if a breakpoint was hit, or wait for the response."
-              request_thread.join(timeout_sec)
-
-              if response_holder[:done]
-                if response_holder[:error]
-                  text += "\n\nRequest error: #{response_holder[:error].message}"
-                else
-                  resp = response_holder[:response]
-                  text += "\n\nHTTP Response: #{resp[:status]}\n#{resp[:body]}"
-                end
-              else
-                text += "\n\nRequest still pending (may be paused at a breakpoint)."
-              end
-
-              return MCP::Tool::Response.new([{ type: "text", text: text }])
+            if method != "GET" && should_disable_csrf?(skip_csrf, client)
+              csrf_disabled = temporarily_disable_csrf(client)
             end
           rescue GirbMcp::SessionError
-            # No active debug session, just do a normal HTTP request
+            client = nil
           end
 
-          request_thread.join(timeout_sec)
-
-          if response_holder[:error]
-            text = "Request error: #{response_holder[:error].message}"
-          elsif response_holder[:done]
-            resp = response_holder[:response]
-            text = "HTTP #{resp[:status]}\n"
-            text += "Headers: #{resp[:headers].to_h.inspect}\n\n" if resp[:headers]
-            text += resp[:body] || "(empty body)"
-          else
-            text = "Request timed out after #{timeout_sec} seconds.\n" \
-                   "The server may be paused at a breakpoint. Use 'get_context' to check."
+          begin
+            if client&.connected?
+              handle_with_debug_session(client, method, url, headers, body, timeout_sec)
+            else
+              handle_without_session(method, url, headers, body, timeout_sec)
+            end
+          ensure
+            # Only restore CSRF when the process is paused (at a breakpoint).
+            # If the process is running (interrupted/timeout), sending commands
+            # would corrupt the debug protocol and cause session disconnection.
+            if csrf_disabled && client&.connected? && client.paused
+              restore_csrf(client)
+            end
           end
-
-          MCP::Tool::Response.new([{ type: "text", text: text }])
         rescue StandardError => e
           MCP::Tool::Response.new([{ type: "text", text: "Error: #{e.class}: #{e.message}" }])
         end
 
         private
+
+        def handle_with_debug_session(client, method, url, headers, body, timeout)
+          # Start HTTP request in a background thread
+          http_holder = { response: nil, error: nil, done: false }
+          http_thread = Thread.new do
+            http_holder[:response] = send_http_request(method, url, headers, body, timeout)
+          rescue StandardError => e
+            http_holder[:error] = e
+          ensure
+            http_holder[:done] = true
+          end
+
+          # Determine process state and act accordingly
+          pending_output = client.ensure_paused(timeout: 2)
+
+          if pending_output
+            # Process is paused — check if there's already a breakpoint hit in the pending output
+            if pending_output.include?("Stop by")
+              return build_breakpoint_response(client, method, url, pending_output)
+            end
+
+            # Process is confirmed paused. Resume and wait for breakpoint.
+            # The HTTP request (sent concurrently) will trigger the breakpoint.
+            result = client.continue_and_wait(timeout: timeout) { http_holder[:done] }
+          else
+            # Process is already running (e.g., after continue_execution).
+            # Just wait for a breakpoint hit from the HTTP request.
+            result = client.wait_for_breakpoint(timeout: timeout) { http_holder[:done] }
+          end
+
+          handle_debug_result(result, client, method, url, http_thread, http_holder, timeout)
+        rescue GirbMcp::SessionError, GirbMcp::ConnectionError => e
+          # Debug session died — wait for HTTP response
+          http_thread&.join(timeout)
+          if http_holder[:done] && http_holder[:response]
+            text = "Debug session lost: #{e.message}\n\n#{format_response(http_holder[:response])}"
+          elsif http_holder[:done] && http_holder[:error]
+            text = "Debug session lost: #{e.message}\nHTTP error: #{http_holder[:error].message}"
+          else
+            text = "Error: #{e.message}"
+          end
+          MCP::Tool::Response.new([{ type: "text", text: text }])
+        end
+
+        def handle_without_session(method, url, headers, body, timeout)
+          response = send_http_request(method, url, headers, body, timeout)
+          text = format_response(response)
+          MCP::Tool::Response.new([{ type: "text", text: text }])
+        rescue StandardError => e
+          MCP::Tool::Response.new([{ type: "text", text: "Request error: #{e.message}" }])
+        end
+
+        def handle_debug_result(result, client, method, url, http_thread, http_holder, timeout)
+          case result[:type]
+          when :breakpoint
+            build_breakpoint_response(client, method, url, result[:output])
+
+          when :interrupted
+            # HTTP response triggered the interrupt — wait for thread to finish
+            http_thread.join(5)
+            build_http_done_response(method, url, http_holder)
+
+          when :timeout, :timeout_with_output
+            # Neither breakpoint nor HTTP response in time
+            http_thread.join(5) # Give HTTP a bit more time
+            if http_holder[:done]
+              build_http_done_response(method, url, http_holder)
+            else
+              text = "HTTP #{method} #{url}\n\n" \
+                     "No breakpoint was hit and the request has not completed after #{timeout}s.\n" \
+                     "Possible causes:\n" \
+                     "  - No breakpoints are set on the code path for this request\n" \
+                     "  - The URL may be incorrect (check the path and port)\n" \
+                     "  - The server may be processing a long-running operation\n\n" \
+                     "Use 'get_context' to check the current debugger state."
+              MCP::Tool::Response.new([{ type: "text", text: text }])
+            end
+          end
+        end
+
+        def build_breakpoint_response(client, method, url, bp_output)
+          client.cleanup_one_shot_breakpoints(bp_output)
+          bp_output = StopEventAnnotator.annotate_breakpoint_hit(bp_output)
+          bp_output = StopEventAnnotator.enrich_stop_context(bp_output, client)
+
+          text = "HTTP #{method} #{url} — request sent.\n\n" \
+                 "Breakpoint hit:\n#{bp_output}\n\n" \
+                 "The request is paused at the breakpoint. " \
+                 "Use 'get_context' to inspect variables, " \
+                 "then 'continue_execution' to let the request complete."
+          MCP::Tool::Response.new([{ type: "text", text: text }])
+        end
+
+        def build_http_done_response(method, url, http_holder)
+          if http_holder[:error]
+            text = "HTTP #{method} #{url}\n\nRequest error: #{http_holder[:error].message}"
+          elsif http_holder[:response]
+            text = "HTTP #{method} #{url}\n\nNo breakpoint hit.\n\n#{format_response(http_holder[:response])}"
+          else
+            text = "HTTP #{method} #{url}\n\nUnexpected state: request completed without response."
+          end
+          MCP::Tool::Response.new([{ type: "text", text: text }])
+        end
+
+        def detect_content_type(body)
+          stripped = body.strip
+          if stripped.start_with?("{") || stripped.start_with?("[")
+            "application/json"
+          else
+            "application/x-www-form-urlencoded"
+          end
+        end
+
+        def should_disable_csrf?(skip_csrf, client)
+          return skip_csrf unless skip_csrf.nil?
+
+          # Auto-detect: disable if connected to a Rails app
+          RailsHelper.rails?(client)
+        end
+
+        def temporarily_disable_csrf(client)
+          result = client.send_command(
+            "p defined?(ActionController::Base) && ActionController::Base.allow_forgery_protection",
+          )
+          cleaned = result.strip.sub(/\A=> /, "")
+          return false unless cleaned == "true"
+
+          client.send_command("ActionController::Base.allow_forgery_protection = false")
+          true
+        rescue GirbMcp::Error
+          false
+        end
+
+        def restore_csrf(client)
+          client.send_command("ActionController::Base.allow_forgery_protection = true")
+        rescue GirbMcp::Error
+          # Best-effort: session may have ended
+        end
+
+        def format_response(resp)
+          parts = []
+          status = resp[:status]
+          parts << "HTTP #{status}"
+
+          # Show redirect location prominently
+          headers = resp[:headers] || {}
+          location = headers["location"]&.first
+          parts << "Location: #{location}" if location
+
+          # Show Set-Cookie headers
+          set_cookies = headers["set-cookie"]
+          if set_cookies && !set_cookies.empty?
+            parts << "Set-Cookie: #{set_cookies.join("; ")}"
+          end
+
+          parts << ""
+
+          # Format body based on content type
+          body = resp[:body]
+          content_type = headers["content-type"]&.first || ""
+
+          if body.nil? || body.empty?
+            parts << "(empty body)"
+          elsif content_type.include?("application/json")
+            parts << format_json_body(body)
+          elsif content_type.include?("text/html")
+            parts << format_html_body(body)
+          else
+            parts << body
+          end
+
+          parts.join("\n")
+        end
+
+        def format_json_body(body)
+          parsed = JSON.parse(body)
+          JSON.pretty_generate(parsed)
+        rescue JSON::ParserError
+          body
+        end
+
+        def format_html_body(body)
+          if body.length > 1000
+            "#{body[0, 1000]}\n\n... (HTML truncated, #{body.length} bytes total)"
+          else
+            body
+          end
+        end
 
         def send_http_request(method, url, headers, body, timeout)
           uri = URI.parse(url)

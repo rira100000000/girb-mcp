@@ -42,6 +42,14 @@ module GirbMcp
             rescue Errno::ESRCH, Errno::EPERM
               # Process already exited
             end
+          else
+            # For connect sessions (e.g., Rails server): resume the process
+            # before disconnecting so it returns to normal execution.
+            # Without this, the process stays paused at the debugger prompt
+            # and cannot be stopped with Ctrl+C.
+            # We use send_command_no_wait because we don't need to wait for
+            # the next debugger prompt — we're about to close the socket.
+            client.send_command_no_wait("c")
           end
 
           # Disconnect the session (closes socket, cleans up temp files)

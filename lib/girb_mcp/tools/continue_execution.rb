@@ -25,6 +25,9 @@ module GirbMcp
         def call(session_id: nil, server_context:)
           client = server_context[:session_manager].client(session_id)
 
+          # Check breakpoint existence before continuing (for timeout message)
+          has_breakpoints = check_breakpoints(client)
+
           output = client.send_continue
 
           # The debug gem may send an `input` prompt just before the process exits
@@ -50,9 +53,14 @@ module GirbMcp
           end
           MCP::Tool::Response.new([{ type: "text", text: text }])
         rescue GirbMcp::TimeoutError
-          MCP::Tool::Response.new([{ type: "text", text:
+          text = if has_breakpoints
             "Execution continued but no breakpoint was hit within the timeout period.\n" \
-            "The program may still be running. Use 'get_context' to check the current state." }])
+            "The process is still running. Use 'get_context' to check the current state."
+          else
+            "Process resumed successfully (running normally, no breakpoints set).\n" \
+            "Use 'set_breakpoint' to add breakpoints, then 'trigger_request' or wait for the code path to execute."
+          end
+          MCP::Tool::Response.new([{ type: "text", text: text }])
         rescue GirbMcp::ConnectionError => e
           text = if e.message.include?("Connection lost") || e.message.include?("connection closed")
             GirbMcp::ExitMessageBuilder.build_exit_message(
@@ -64,6 +72,17 @@ module GirbMcp
           MCP::Tool::Response.new([{ type: "text", text: text }])
         rescue GirbMcp::Error => e
           MCP::Tool::Response.new([{ type: "text", text: "Error: #{e.message}" }])
+        end
+
+        private
+
+        # Check if any breakpoints are currently set.
+        # Returns true if breakpoints exist, false otherwise.
+        def check_breakpoints(client)
+          output = client.send_command("info breakpoints")
+          !output.strip.empty? && !output.include?("No breakpoints")
+        rescue GirbMcp::Error
+          false
         end
       end
     end

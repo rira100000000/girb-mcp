@@ -36,6 +36,14 @@ module GirbMcp
           parts = []
           total_truncated = 0
 
+          # Show trap context warning as the first section
+          if client.respond_to?(:in_trap_context?) && client.in_trap_context?
+            parts << "=== Context: Signal Trap ===\n" \
+                     "Restricted: DB queries, require, autoloading, method breakpoints\n" \
+                     "Available: evaluate_code (simple expressions), set_breakpoint (file:line), rails_routes\n" \
+                     "To escape: set_breakpoint(file, line) + trigger_request"
+          end
+
           # Collect each section independently so partial results are still useful
           variable_commands = %w[info\ locals info\ ivars]
           sections = [

@@ -63,14 +63,34 @@ RSpec.describe GirbMcp::Tools::ContinueExecution do
       expect(text).to include("Error: Some other error")
     end
 
-    it "handles TimeoutError" do
-      allow(client).to receive(:send_continue).and_raise(
-        GirbMcp::TimeoutError, "timeout"
-      )
+    context "when TimeoutError occurs" do
+      before do
+        allow(client).to receive(:send_continue).and_raise(
+          GirbMcp::TimeoutError, "timeout"
+        )
+      end
 
-      response = described_class.call(server_context: server_context)
-      text = response_text(response)
-      expect(text).to include("no breakpoint was hit")
+      it "shows 'no breakpoint hit' when breakpoints exist" do
+        allow(client).to receive(:send_command)
+          .with("info breakpoints")
+          .and_return("#1  BP - Line  file.rb:10 (line)")
+
+        response = described_class.call(server_context: server_context)
+        text = response_text(response)
+        expect(text).to include("no breakpoint was hit")
+        expect(text).to include("still running")
+      end
+
+      it "shows 'resumed successfully' when no breakpoints" do
+        allow(client).to receive(:send_command)
+          .with("info breakpoints")
+          .and_return("No breakpoints")
+
+        response = described_class.call(server_context: server_context)
+        text = response_text(response)
+        expect(text).to include("resumed successfully")
+        expect(text).to include("no breakpoints set")
+      end
     end
 
     it "handles ConnectionError for lost connection" do

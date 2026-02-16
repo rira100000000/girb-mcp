@@ -19,10 +19,14 @@ require_relative "tools/run_script"
 require_relative "tools/trigger_request"
 require_relative "tools/list_paused_sessions"
 require_relative "tools/disconnect"
+require_relative "tools/rails_info"
+require_relative "tools/rails_routes"
+require_relative "tools/rails_model"
 
 module GirbMcp
   class Server
-    TOOLS = [
+    # Base tools: always available
+    BASE_TOOLS = [
       # Discovery & connection
       Tools::ListDebugSessions,
       Tools::Connect,
@@ -46,6 +50,16 @@ module GirbMcp
       Tools::RunScript,
       Tools::TriggerRequest,
     ].freeze
+
+    # Rails tools: dynamically added when a Rails process is detected
+    RAILS_TOOLS = [
+      Tools::RailsInfo,
+      Tools::RailsRoutes,
+      Tools::RailsModel,
+    ].freeze
+
+    # All tools (used in tests and for reference)
+    TOOLS = (BASE_TOOLS + RAILS_TOOLS).freeze
 
     DEFAULT_HTTP_PORT = 6029
     DEFAULT_HTTP_HOST = "127.0.0.1"
@@ -74,7 +88,69 @@ module GirbMcp
       the information you need (source listing and stop location are included in the response)
       - For a quick breakpoint check without fetching all context, use \
       run_debug_command(command: "info breakpoints")
+
+      IMPORTANT — connect pauses the target process:
+      When you use 'connect', the target process is PAUSED. It will not serve requests or \
+      respond to Ctrl+C until you resume it. Always use 'continue_execution' when done \
+      investigating, or 'disconnect' to detach (which also resumes the process). \
+      Never leave a connected session idle without resuming — the user won't be able to \
+      interact with the target process.
+
+      Signal trap context (Puma/threaded servers):
+      When connecting to a process like Puma, the debug gem pauses it via SIGURG. \
+      This puts the process in a signal trap context where thread operations (Mutex, \
+      DB connection pools, autoloading) fail with ThreadError. \
+      Simple expressions (variables, constants, p/pp) still work in trap context. \
+      The 'connect' tool automatically detects and tries to escape this. \
+      If escape fails (common when the process is blocked on IO like IO.select): \
+      1. set_breakpoint on a line in your controller/action \
+      2. trigger_request to send an HTTP request — this auto-resumes the process \
+      3. Once stopped at the breakpoint, all operations work normally \
+      Do NOT manually call continue_execution before trigger_request — \
+      trigger_request handles resuming the process automatically.
+
+      Rails debugging:
+      When you connect to a Rails process, additional Rails-specific tools become available \
+      automatically (rails_info, rails_routes, rails_model). These tools are NOT shown \
+      when debugging plain Ruby scripts.
+
+      Rails debugging workflow:
+      1. Start the Rails server with debugging: RUBY_DEBUG_OPEN=true bin/rails server
+      2. connect to attach to the Rails process (auto-detects trap context)
+      3. set_breakpoint on a controller action (e.g., app/controllers/users_controller.rb:10)
+      4. trigger_request to send an HTTP request — this auto-resumes the paused process, \
+      sends the request, and waits for the breakpoint to hit. \
+      CSRF protection is automatically disabled for non-GET requests. \
+      You do NOT need to call continue_execution first.
+      5. When the breakpoint hits, use get_context, evaluate_code, and rails_model to \
+      inspect the current state and understand model structures
+      6. continue_execution to let the request complete and see the response
+      7. To debug another request, set new breakpoints and call trigger_request again
+      8. When done debugging, use 'disconnect' to detach and resume the server
+
+      Note: rails_info, rails_routes, and rails_model may not work in trap context. \
+      Use them after hitting a breakpoint via trigger_request.
     TEXT
+
+    # Register Rails tools on an MCP server instance and notify connected clients.
+    # Safe to call multiple times — skips already-registered tools.
+    def self.register_rails_tools(mcp_server)
+      tools_hash = mcp_server.instance_variable_get(:@tools)
+      tool_names = mcp_server.instance_variable_get(:@tool_names)
+      added = false
+
+      RAILS_TOOLS.each do |tool_class|
+        name = tool_class.name_value
+        next if tools_hash.key?(name)
+
+        tools_hash[name] = tool_class
+        tool_names << name
+        added = true
+      end
+
+      mcp_server.notify_tools_list_changed if added
+      added
+    end
 
     def initialize(transport: nil, port: nil, host: nil, session_timeout: nil, **_)
       @transport_type = transport || "stdio"
@@ -86,13 +162,21 @@ module GirbMcp
     end
 
     def start
+      server_context = { session_manager: @session_manager }
+
       server = MCP::Server.new(
         name: "girb-mcp",
         version: GirbMcp::VERSION,
         instructions: INSTRUCTIONS,
         tools: TOOLS,
-        server_context: { session_manager: @session_manager },
+        server_context: server_context,
       )
+
+      # Safety net: resume connected processes when the server exits for any reason.
+      # This covers cases where Claude Code exits without calling 'disconnect',
+      # stdin closes unexpectedly, or the MCP gem calls Kernel.exit directly.
+      # disconnect_all is idempotent, so multiple calls (at_exit + ensure + signal) are safe.
+      at_exit { @session_manager.disconnect_all }
 
       setup_signal_handlers
 
@@ -203,26 +287,24 @@ module GirbMcp
     end
 
     def setup_signal_handlers
-      trap("INT") do
-        @session_manager.disconnect_all
-        exit(0)
-      end
-
-      trap("TERM") do
-        @session_manager.disconnect_all
-        exit(0)
+      %w[INT TERM HUP].each do |sig|
+        trap(sig) do
+          @session_manager.disconnect_all
+          exit(0)
+        end
+      rescue ArgumentError
+        # Signal not supported on this platform (e.g., HUP on Windows)
       end
     end
 
     def setup_http_signal_handlers(webrick)
-      trap("INT") do
-        @session_manager.disconnect_all
-        webrick.shutdown
-      end
-
-      trap("TERM") do
-        @session_manager.disconnect_all
-        webrick.shutdown
+      %w[INT TERM HUP].each do |sig|
+        trap(sig) do
+          @session_manager.disconnect_all
+          webrick.shutdown
+        end
+      rescue ArgumentError
+        # Signal not supported on this platform
       end
     end
   end

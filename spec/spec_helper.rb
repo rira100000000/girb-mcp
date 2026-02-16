@@ -19,10 +19,11 @@ RSpec.configure do |config|
 end
 
 # Helper to build a mock DebugClient
-def build_mock_client(connected: true, pid: "12345")
+def build_mock_client(connected: true, pid: "12345", paused: true)
   client = instance_double(GirbMcp::DebugClient,
     connected?: connected,
     pid: pid,
+    paused: paused,
     wait_thread: nil,
     stderr_file: nil,
     stdout_file: nil,
@@ -30,6 +31,7 @@ def build_mock_client(connected: true, pid: "12345")
     script_args: nil,
   )
   allow(client).to receive(:send_command).and_return("")
+  allow(client).to receive(:send_command_no_wait)
   allow(client).to receive(:send_continue).and_return("")
   allow(client).to receive(:check_current_exception).and_return(nil)
   allow(client).to receive(:cleanup_one_shot_breakpoints).and_return(nil)
@@ -37,6 +39,11 @@ def build_mock_client(connected: true, pid: "12345")
   allow(client).to receive(:disconnect)
   allow(client).to receive(:read_stdout_output).and_return(nil)
   allow(client).to receive(:read_stderr_output).and_return(nil)
+  allow(client).to receive(:in_trap_context?).and_return(false)
+  allow(client).to receive(:escape_trap_context!).and_return(nil)
+  allow(client).to receive(:ensure_paused).and_return("")
+  allow(client).to receive(:continue_and_wait).and_return({ type: :timeout, output: "" })
+  allow(client).to receive(:wait_for_breakpoint).and_return({ type: :timeout, output: "" })
   client
 end
 

@@ -150,13 +150,14 @@ The session manager also detects and cleans up sessions whose target process has
 
 | Tool | Description |
 |------|-------------|
-| `set_breakpoint` | Set a line breakpoint (file + line) or catch an exception class |
-| `remove_breakpoint` | Remove a breakpoint by file + line, exception class, or number |
+| `set_breakpoint` | Set a breakpoint: line (file + line), method (`User#save`), or exception class |
+| `remove_breakpoint` | Remove a breakpoint by file + line, method name, exception class, or number |
 | `continue_execution` | Resume execution until next breakpoint or exit |
 | `step` | Step into the next method call |
 | `next` | Step over to the next line |
 | `finish` | Run until the current method/block returns |
 | `run_debug_command` | Execute any raw debugger command |
+| `disconnect` | Disconnect from the session and terminate the process |
 
 ### Entry Points
 
@@ -178,6 +179,15 @@ Agent: evaluate_code(code: "result")
 Agent: continue_execution()
 ```
 
+### Method breakpoints
+
+```
+Agent: run_script(file: "my_script.rb", breakpoints: ["DataPipeline#validate"])
+  → Script starts and pauses at DataPipeline#validate
+Agent: evaluate_code(code: "records")
+Agent: continue_execution()
+```
+
 ### Catch and debug exceptions
 
 ```
@@ -187,6 +197,17 @@ Agent: continue_execution()
   → Execution pauses BEFORE the exception propagates
 Agent: get_context()
 Agent: evaluate_code(code: "$!.message")
+```
+
+### Restart after a crash
+
+```
+  → Program crashed with NoMethodError
+Agent: run_script(file: "my_script.rb", restore_breakpoints: true)
+  → Same breakpoints restored automatically
+Agent: set_breakpoint(exception_class: "NoMethodError")
+Agent: continue_execution()
+  → Catches the exception before it crashes
 ```
 
 ### Debug a Rails request

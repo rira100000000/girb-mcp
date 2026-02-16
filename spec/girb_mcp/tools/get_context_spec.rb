@@ -81,6 +81,34 @@ RSpec.describe GirbMcp::Tools::GetContext do
       text = response_text(response)
       expect(text).to include("Error: No session")
     end
+
+    context "when in signal trap context" do
+      before do
+        allow(client).to receive(:in_trap_context?).and_return(true)
+      end
+
+      it "shows trap context warning as first section" do
+        response = described_class.call(server_context: server_context)
+        text = response_text(response)
+
+        expect(text).to include("=== Context: Signal Trap ===")
+        expect(text).to include("Restricted: DB queries, require, autoloading, method breakpoints")
+        expect(text).to include("Available: evaluate_code")
+        expect(text).to include("To escape: set_breakpoint(file, line) + trigger_request")
+        # Ensure it appears before the Current Location section
+        trap_pos = text.index("Context: Signal Trap")
+        location_pos = text.index("Current Location")
+        expect(trap_pos).to be < location_pos
+      end
+    end
+
+    context "when not in trap context" do
+      it "does not show trap context warning" do
+        response = described_class.call(server_context: server_context)
+        text = response_text(response)
+        expect(text).not_to include("Context: Signal Trap")
+      end
+    end
   end
 
   describe "TRUNCATION_PATTERN" do

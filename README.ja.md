@@ -148,13 +148,14 @@ girb-mcp --session-timeout 3600  # 1時間
 
 | ツール | 説明 |
 |------|------|
-| `set_breakpoint` | 行ブレークポイント（file + line）または例外クラスのキャッチを設定 |
-| `remove_breakpoint` | file + line、例外クラス、または番号でブレークポイントを削除 |
+| `set_breakpoint` | ブレークポイント設定：行（file + line）、メソッド（`User#save`）、例外クラス |
+| `remove_breakpoint` | file + line、メソッド名、例外クラス、または番号でブレークポイントを削除 |
 | `continue_execution` | 次のブレークポイントまたは終了まで実行を再開 |
 | `step` | ステップイン（メソッド呼び出しに入る） |
 | `next` | ステップオーバー（次の行へ進む） |
 | `finish` | 現在のメソッド/ブロックがreturnするまで実行 |
 | `run_debug_command` | 任意のデバッガコマンドを直接実行 |
+| `disconnect` | セッション切断とプロセス終了 |
 
 ### 入口ツール
 
@@ -176,6 +177,15 @@ Agent: evaluate_code(code: "result")
 Agent: continue_execution()
 ```
 
+### メソッドブレークポイント
+
+```
+Agent: run_script(file: "my_script.rb", breakpoints: ["DataPipeline#validate"])
+  → スクリプトが起動し、DataPipeline#validate で停止
+Agent: evaluate_code(code: "records")
+Agent: continue_execution()
+```
+
 ### 例外のキャッチとデバッグ
 
 ```
@@ -185,6 +195,17 @@ Agent: continue_execution()
   → 例外が伝播する前に実行が停止
 Agent: get_context()
 Agent: evaluate_code(code: "$!.message")
+```
+
+### クラッシュ後の再起動
+
+```
+  → NoMethodError でプログラムがクラッシュ
+Agent: run_script(file: "my_script.rb", restore_breakpoints: true)
+  → 前回のブレークポイントが自動復元
+Agent: set_breakpoint(exception_class: "NoMethodError")
+Agent: continue_execution()
+  → クラッシュ前に例外をキャッチ
 ```
 
 ### Railsリクエストのデバッグ

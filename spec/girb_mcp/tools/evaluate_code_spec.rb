@@ -111,5 +111,37 @@ RSpec.describe GirbMcp::Tools::EvaluateCode do
       described_class.call(code: 'puts "日本語"', server_context: server_context)
       expect(client).to have_received(:send_command).with(/Base64/)
     end
+
+    context "ThreadError detection" do
+      it "shows trap context guidance when ThreadError occurs in evaluation" do
+        allow(client).to receive(:send_command).with(/\$__girb_err=nil; pp/).and_return("=> nil")
+        allow(client).to receive(:send_command).with("p $__girb_err").and_return(
+          '=> "ThreadError: can\'t be called from trap context"'
+        )
+        allow(client).to receive(:send_command).with("p $__girb_cap.string").and_return('=> ""')
+
+        response = described_class.call(code: "User.first", server_context: server_context)
+        text = response_text(response)
+
+        expect(text).to include("ThreadError")
+        expect(text).to include("signal trap context")
+        expect(text).to include("set_breakpoint")
+        expect(text).to include("trigger_request")
+      end
+
+      it "does not show trap context guidance for non-ThreadError errors" do
+        allow(client).to receive(:send_command).with(/\$__girb_err=nil; pp/).and_return("=> nil")
+        allow(client).to receive(:send_command).with("p $__girb_err").and_return(
+          '=> "NameError: undefined local variable \'x\'"'
+        )
+        allow(client).to receive(:send_command).with("p $__girb_cap.string").and_return('=> ""')
+
+        response = described_class.call(code: "x", server_context: server_context)
+        text = response_text(response)
+
+        expect(text).to include("NameError")
+        expect(text).not_to include("trap context")
+      end
+    end
   end
 end

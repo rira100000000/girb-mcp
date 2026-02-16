@@ -120,6 +120,14 @@ RSpec.describe GirbMcp::DebugClient do
       client.disconnect
       expect(client.connected?).to be false
       expect(client.pid).to be_nil
+      expect(client.paused).to be false
+    end
+  end
+
+  describe "#paused" do
+    it "starts as false" do
+      client = GirbMcp::DebugClient.new
+      expect(client.paused).to be false
     end
   end
 
@@ -128,6 +136,39 @@ RSpec.describe GirbMcp::DebugClient do
       client = GirbMcp::DebugClient.new
       # check_current_exception calls send_command internally
       expect(client.check_current_exception).to be_nil
+    end
+  end
+
+  describe "#ensure_paused" do
+    it "returns empty string when already paused" do
+      client = GirbMcp::DebugClient.new
+      # Manually set paused state
+      client.instance_variable_set(:@paused, true)
+      expect(client.ensure_paused).to eq("")
+    end
+
+    it "returns nil when not connected" do
+      client = GirbMcp::DebugClient.new
+      # Not connected, no socket
+      expect(client.ensure_paused).to be_nil
+    end
+  end
+
+  describe "#continue_and_wait" do
+    it "raises SessionError when not connected" do
+      client = GirbMcp::DebugClient.new
+      expect { client.continue_and_wait }.to raise_error(
+        GirbMcp::SessionError, /Not connected/
+      )
+    end
+  end
+
+  describe "#wait_for_breakpoint" do
+    it "raises SessionError when not connected" do
+      client = GirbMcp::DebugClient.new
+      expect { client.wait_for_breakpoint }.to raise_error(
+        GirbMcp::SessionError, /Not connected/
+      )
     end
   end
 end

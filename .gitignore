@@ -7,3 +7,10 @@ plan.md
 /tmp/
 *.gem
 Gemfile.lock
+
+# Rails test app artifacts
+examples/rails_test_app/**/config/master.key
+examples/rails_test_app/**/config/credentials.yml.enc
+examples/rails_test_app/**/storage/*.sqlite3*
+examples/rails_test_app/**/log/*.log
+examples/rails_test_app/**/tmp/

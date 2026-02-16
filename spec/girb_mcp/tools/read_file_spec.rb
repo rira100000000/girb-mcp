@@ -3,7 +3,9 @@
 require "tempfile"
 
 RSpec.describe GirbMcp::Tools::ReadFile do
-  let(:server_context) { { session_manager: build_mock_manager } }
+  let(:client) { build_mock_client }
+  let(:manager) { build_mock_manager(client: client) }
+  let(:server_context) { { session_manager: manager } }
 
   describe ".call" do
     let(:tmpfile) do
@@ -69,6 +71,46 @@ RSpec.describe GirbMcp::Tools::ReadFile do
       )
       text = response_text(response)
       expect(text).to include("1: line 1")
+    end
+
+    context "relative path resolution" do
+      it "resolves relative paths against debug session working directory" do
+        # Create a file in a known directory
+        dir = Dir.mktmpdir
+        File.write(File.join(dir, "app.rb"), "puts 'hello'\n")
+
+        allow(client).to receive(:send_command)
+          .with("p Dir.pwd")
+          .and_return("=> \"#{dir}\"")
+
+        response = described_class.call(path: "app.rb", server_context: server_context)
+        text = response_text(response)
+
+        expect(text).to include("puts 'hello'")
+        expect(text).to include(dir)
+      ensure
+        FileUtils.rm_rf(dir)
+      end
+
+      it "falls back to local CWD when no debug session" do
+        allow(manager).to receive(:client)
+          .and_raise(GirbMcp::SessionError, "No active session")
+
+        response = described_class.call(
+          path: "/nonexistent/relative.rb",
+          server_context: server_context,
+        )
+        text = response_text(response)
+        expect(text).to include("Error: File not found")
+      end
+
+      it "uses absolute paths as-is" do
+        response = described_class.call(path: tmpfile.path, server_context: server_context)
+        text = response_text(response)
+        expect(text).to include("10 lines")
+        # Should NOT call Dir.pwd for absolute paths
+        expect(client).not_to have_received(:send_command).with("p Dir.pwd")
+      end
     end
   end
 

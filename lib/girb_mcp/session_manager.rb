@@ -76,7 +76,23 @@ module GirbMcp
 
       # Avoid mutex here so this can be called from signal trap context.
       # At shutdown, thread safety is not a concern.
-      @sessions.each_value { |info| info.client.disconnect rescue nil }
+      has_connect_sessions = false
+      @sessions.each_value do |info|
+        # Resume connect sessions (no wait_thread) so the target process
+        # doesn't stay stuck at the debugger prompt after we disconnect.
+        unless info.client.wait_thread
+          msg = "command #{info.client.pid} 500 c\n"
+          info.client.instance_variable_get(:@socket)&.write(msg.b) rescue nil
+          has_connect_sessions = true
+        end
+      rescue StandardError
+        # ignore
+      end
+      # One sleep for all sessions — give debug gems time to process continue
+      sleep 0.3 if has_connect_sessions
+      @sessions.each_value do |info|
+        info.client.disconnect rescue nil
+      end
       @sessions.clear
       @default_session_id = nil
     end

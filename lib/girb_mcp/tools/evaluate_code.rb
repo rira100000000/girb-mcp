@@ -63,6 +63,14 @@ module GirbMcp
               text = "Error: #{err_info}"
               text += "\n\nDebugger output:\n#{output}" if output && !output.strip.empty? && output.strip != "nil"
               text += "\n\nCaptured stdout:\n#{captured}" if captured
+              if err_info.include?("ThreadError")
+                text += "\n\nThis error occurs in signal trap context (common when connecting to Puma/Rails via SIGURG).\n" \
+                        "Thread operations (Mutex, DB queries, model autoloading) are not available here.\n\n" \
+                        "To escape trap context:\n" \
+                        "  1. set_breakpoint on a line in your controller/action\n" \
+                        "  2. trigger_request to send an HTTP request (this auto-resumes the process)\n" \
+                        "  3. Once stopped at the breakpoint, all operations work normally"
+              end
             elsif captured
               # Label both sections when stdout is present to avoid confusion
               text = "Return value:\n#{output}\n\nCaptured stdout:\n#{captured}"
@@ -76,7 +84,12 @@ module GirbMcp
               "- Breaking the expression into smaller parts\n" \
               "- Using 'run_debug_command' with a custom timeout" }])
           rescue GirbMcp::Error => e
-            MCP::Tool::Response.new([{ type: "text", text: "Error: #{e.message}" }])
+            text = "Error: #{e.message}"
+            if e.message.include?("ThreadError")
+              text += "\n\nThis error occurs in signal trap context. " \
+                      "Use set_breakpoint + trigger_request to escape to normal context first."
+            end
+            MCP::Tool::Response.new([{ type: "text", text: text }])
           ensure
             if stdout_redirected
               client.send_command('$stdout = $__girb_old if defined?($__girb_old)') rescue nil
