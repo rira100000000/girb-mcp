@@ -406,7 +406,7 @@ RSpec.describe GirbMcp::Tools::Connect do
         expect(text).to include("trigger_request")
       end
 
-      it "does not show next steps when stopped in app code" do
+      it "shows app code actions when stopped in app code" do
         allow(client).to receive(:send_command)
           .with("p defined?(Rails)")
           .and_return('=> "constant"')
@@ -420,6 +420,57 @@ RSpec.describe GirbMcp::Tools::Connect do
         text = response_text(response)
 
         expect(text).not_to include("To debug your application code")
+        expect(text).to include("You are in application code")
+        expect(text).to include("get_context")
+        expect(text).to include("evaluate_code")
+      end
+
+      it "shows escaped context message when auto-escape succeeded" do
+        allow(client).to receive(:in_trap_context?).and_return(true)
+        allow(client).to receive(:send_command)
+          .with("p defined?(Rails)")
+          .and_return('=> "constant"')
+
+        # Set up port detection (port 3000)
+        allow(Dir).to receive(:exist?).and_call_original
+        allow(Dir).to receive(:exist?).with("/proc/12345/fd").and_return(true)
+        allow(Dir).to receive(:foreach).and_call_original
+        allow(Dir).to receive(:foreach).with("/proc/12345/fd").and_yield("5")
+        allow(File).to receive(:readlink).and_call_original
+        allow(File).to receive(:readlink).with("/proc/12345/fd/5").and_return("socket:[99999]")
+        allow(File).to receive(:exist?).and_call_original
+        allow(File).to receive(:exist?).with("/proc/12345/net/tcp").and_return(true)
+        allow(File).to receive(:exist?).with("/proc/12345/net/tcp6").and_return(false)
+        tcp_content = <<~TCP
+          sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
+           0: 00000000:0BB8 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 99999
+        TCP
+        allow(File).to receive(:readlines).with("/proc/12345/net/tcp").and_return(tcp_content.lines)
+
+        # Route info
+        allow(client).to receive(:send_command)
+          .with(/routes\.count/)
+          .and_return("=> 5")
+        allow(client).to receive(:send_command)
+          .with(/routes\.select.*first/)
+          .and_return('=> "GET     /users users#index"')
+        allow(client).to receive(:send_command)
+          .with("p Rails.root.to_s")
+          .and_return('=> "/app"')
+        allow(client).to receive(:send_command)
+          .with(/File\.exist\?.*users_controller.*File\.readlines/)
+          .and_return("=> 5")
+        allow(client).to receive(:send_command)
+          .with("break /app/app/controllers/users_controller.rb:5")
+          .and_return("#1  BP - Line  /app/app/controllers/users_controller.rb:5")
+        allow(client).to receive(:continue_and_wait).and_return({ type: :breakpoint, output: "Stop by #1" })
+        allow(client).to receive(:send_command).with("delete 1").and_return("")
+
+        response = described_class.call(server_context: server_context)
+        text = response_text(response)
+
+        expect(text).to include("You are now in application code context")
+        expect(text).to include("All tools")
       end
 
       it "does not show Rails summary for non-Rails processes" do

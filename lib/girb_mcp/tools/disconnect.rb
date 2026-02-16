@@ -43,12 +43,22 @@ module GirbMcp
               # Process already exited
             end
           else
-            # For connect sessions (e.g., Rails server): resume the process
-            # before disconnecting so it returns to normal execution.
-            # Without this, the process stays paused at the debugger prompt
-            # and cannot be stopped with Ctrl+C.
-            # We use send_command_no_wait because we don't need to wait for
-            # the next debugger prompt — we're about to close the socket.
+            # For connect sessions (e.g., Rails server): delete all breakpoints
+            # then resume the process before disconnecting.
+            # Without BP deletion, the process may immediately hit a remaining
+            # breakpoint and pause again with no debugger attached.
+            begin
+              bp_output = client.send_command("info breakpoints")
+              unless bp_output.strip.empty?
+                bp_output.each_line do |line|
+                  if (match = line.match(/#(\d+)/))
+                    client.send_command("delete #{match[1]}") rescue nil
+                  end
+                end
+              end
+            rescue GirbMcp::Error
+              # Best-effort: proceed to continue even if BP deletion fails
+            end
             client.send_command_no_wait("c")
           end
 

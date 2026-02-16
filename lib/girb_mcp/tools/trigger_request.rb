@@ -10,6 +10,7 @@ module GirbMcp
   module Tools
     class TriggerRequest < MCP::Tool
       DEFAULT_TIMEOUT = 30
+      HTTP_JOIN_TIMEOUT = 5
 
       description "[Entry Point] Send an HTTP request to a Rails app running under the debugger. " \
                   "If a breakpoint is set, execution pauses there and you can inspect the state. " \
@@ -59,6 +60,8 @@ module GirbMcp
       )
 
       class << self
+        MAX_LOG_BYTES = 4000
+
         def call(method:, url:, headers: {}, body: nil, cookies: nil, skip_csrf: nil,
                  timeout: nil, session_id: nil, server_context:)
           manager = server_context[:session_manager]
@@ -84,21 +87,26 @@ module GirbMcp
           # CSRF handling: disable forgery protection for non-GET requests on Rails
           csrf_disabled = false
           client = nil
+          log_capture = nil
           begin
             client = manager.client(session_id)
             if method != "GET" && should_disable_csrf?(skip_csrf, client)
               csrf_disabled = temporarily_disable_csrf(client)
             end
+            # Snapshot log file position before request for Rails log capture
+            log_capture = start_log_capture(client)
           rescue GirbMcp::SessionError
             client = nil
           end
 
           begin
-            if client&.connected?
+            response = if client&.connected?
               handle_with_debug_session(client, method, url, headers, body, timeout_sec)
             else
               handle_without_session(method, url, headers, body, timeout_sec)
             end
+
+            append_captured_logs(response, log_capture)
           ensure
             # Only restore CSRF when the process is paused (at a breakpoint).
             # If the process is running (interrupted/timeout), sending commands
@@ -171,12 +179,12 @@ module GirbMcp
 
           when :interrupted
             # HTTP response triggered the interrupt — wait for thread to finish
-            http_thread.join(5)
+            http_thread.join(HTTP_JOIN_TIMEOUT)
             build_http_done_response(method, url, http_holder)
 
           when :timeout, :timeout_with_output
             # Neither breakpoint nor HTTP response in time
-            http_thread.join(5) # Give HTTP a bit more time
+            http_thread.join(HTTP_JOIN_TIMEOUT) # Give HTTP a bit more time
             if http_holder[:done]
               build_http_done_response(method, url, http_holder)
             else
@@ -185,8 +193,8 @@ module GirbMcp
                      "Possible causes:\n" \
                      "  - No breakpoints are set on the code path for this request\n" \
                      "  - The URL may be incorrect (check the path and port)\n" \
-                     "  - The server may be processing a long-running operation\n\n" \
-                     "Use 'get_context' to check the current debugger state."
+                     "  - The server may be processing a long-running operation\n\n"
+              text += breakpoint_diagnostics(client)
               MCP::Tool::Response.new([{ type: "text", text: text }])
             end
           end
@@ -205,7 +213,7 @@ module GirbMcp
           MCP::Tool::Response.new([{ type: "text", text: text }])
         end
 
-        def build_http_done_response(method, url, http_holder)
+        def build_http_done_response(method, url, http_holder, client: nil)
           if http_holder[:error]
             text = "HTTP #{method} #{url}\n\nRequest error: #{http_holder[:error].message}"
           elsif http_holder[:response]
@@ -299,6 +307,75 @@ module GirbMcp
           else
             body
           end
+        end
+
+        # Build diagnostic info about current breakpoints for timeout/no-hit messages.
+        def breakpoint_diagnostics(client)
+          return "Use 'get_context' to check the current debugger state.\n" unless client&.connected? && client.paused
+
+          bp_list = client.send_command("info breakpoints")
+          cleaned = bp_list.strip
+          if cleaned.empty? || cleaned.include?("No breakpoints")
+            "Current breakpoints: (none set)\n" \
+            "Hint: Use 'set_breakpoint' to add a breakpoint before calling trigger_request.\n"
+          else
+            "Current breakpoints:\n#{cleaned}\n\n" \
+            "Verify that the breakpoint file paths match your request's code path.\n"
+          end
+        rescue GirbMcp::Error
+          "Use 'get_context' to check the current debugger state.\n"
+        end
+
+        # Snapshot the Rails log file position before the request.
+        # Returns { path:, position: } or nil if not available.
+        def start_log_capture(client)
+          return nil unless RailsHelper.rails?(client)
+
+          log_path = RailsHelper.log_file_path(client)
+          return nil unless log_path && File.exist?(log_path)
+
+          { path: log_path, position: File.size(log_path) }
+        rescue StandardError
+          nil
+        end
+
+        # Read new log entries since the snapshot and append to the response.
+        def append_captured_logs(response, log_capture)
+          return response unless log_capture
+
+          logs = read_log_diff(log_capture[:path], log_capture[:position])
+          return response if logs.nil? || logs.empty?
+
+          # Append log section to the existing response text
+          existing = response.content.first
+          return response unless existing.is_a?(Hash) && existing[:type] == "text"
+
+          log_section = "\n\n--- Server Log ---\n#{logs}"
+          updated_text = existing[:text] + log_section
+          MCP::Tool::Response.new([{ type: "text", text: updated_text }])
+        end
+
+        # Read log file content from a saved position.
+        # Returns the new log content (truncated if too long) or nil.
+        def read_log_diff(log_path, start_position)
+          return nil unless File.exist?(log_path)
+
+          current_size = File.size(log_path)
+          return nil if current_size <= start_position
+
+          bytes_to_read = current_size - start_position
+          content = File.binread(log_path, bytes_to_read, start_position)
+          content = content.encode("UTF-8", invalid: :replace, undef: :replace, replace: "?")
+          content.strip!
+          return nil if content.empty?
+
+          if content.length > MAX_LOG_BYTES
+            content = content[0, MAX_LOG_BYTES] + "\n... (log truncated, #{bytes_to_read} bytes total)"
+          end
+
+          content
+        rescue StandardError
+          nil
         end
 
         def send_http_request(method, url, headers, body, timeout)

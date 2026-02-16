@@ -111,6 +111,18 @@ module GirbMcp
       nil
     end
 
+    # Get the path to the Rails log file (trap-safe).
+    # Returns the absolute path string or nil if not determinable.
+    def log_file_path(client)
+      root = eval_expr(client, "Rails.root.to_s")
+      env = eval_expr(client, "Rails.env")
+      return nil unless root && env
+
+      "#{root}/log/#{env}.log"
+    rescue GirbMcp::Error
+      nil
+    end
+
     TRAP_CONTEXT_HINT = "Note: The process may be in signal trap context (common with Puma). " \
                         "Set a breakpoint and use trigger_request to escape trap context first."
   end

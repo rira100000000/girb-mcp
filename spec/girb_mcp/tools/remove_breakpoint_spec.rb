@@ -107,6 +107,39 @@ RSpec.describe GirbMcp::Tools::RemoveBreakpoint do
       end
     end
 
+    context "remove all" do
+      it "removes all breakpoints" do
+        allow(client).to receive(:send_command).with("info breakpoints").and_return(bp_list)
+        allow(client).to receive(:send_command).with("delete 3").and_return("")
+        allow(client).to receive(:send_command).with("delete 2").and_return("")
+        allow(client).to receive(:send_command).with("delete 1").and_return("")
+
+        response = described_class.call(all: true, server_context: server_context)
+        text = response_text(response)
+
+        expect(text).to include("Deleted all 3 breakpoint(s)")
+      end
+
+      it "clears breakpoint specs from manager" do
+        allow(client).to receive(:send_command).with("info breakpoints").and_return(bp_list)
+        allow(client).to receive(:send_command).with("delete 3").and_return("")
+        allow(client).to receive(:send_command).with("delete 2").and_return("")
+        allow(client).to receive(:send_command).with("delete 1").and_return("")
+        expect(manager).to receive(:clear_breakpoint_specs)
+
+        described_class.call(all: true, server_context: server_context)
+      end
+
+      it "reports when no breakpoints exist" do
+        allow(client).to receive(:send_command).with("info breakpoints").and_return("No breakpoints")
+
+        response = described_class.call(all: true, server_context: server_context)
+        text = response_text(response)
+
+        expect(text).to include("No breakpoints to remove")
+      end
+    end
+
     context "invalid parameters" do
       it "returns error when no valid parameters" do
         response = described_class.call(server_context: server_context)

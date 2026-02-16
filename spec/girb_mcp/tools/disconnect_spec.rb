@@ -49,11 +49,48 @@ RSpec.describe GirbMcp::Tools::Disconnect do
 
     it "resumes process on disconnect for connect sessions" do
       # connect session: wait_thread is nil (default from build_mock_client)
+      allow(client).to receive(:send_command).with("info breakpoints").and_return("")
+
       response = described_class.call(server_context: server_context)
       text = response_text(response)
 
       expect(client).to have_received(:send_command_no_wait).with("c")
       expect(text).to include("Disconnected from session")
+    end
+
+    it "deletes all breakpoints before continuing for connect sessions" do
+      bp_output = "#0  BP - Line  app/controllers/users_controller.rb:10\n" \
+                  "#1  BP - Line  app/models/user.rb:20\n"
+      allow(client).to receive(:send_command).with("info breakpoints").and_return(bp_output)
+      allow(client).to receive(:send_command).with("delete 0").and_return("")
+      allow(client).to receive(:send_command).with("delete 1").and_return("")
+
+      described_class.call(server_context: server_context)
+
+      expect(client).to have_received(:send_command).with("info breakpoints")
+      expect(client).to have_received(:send_command).with("delete 0")
+      expect(client).to have_received(:send_command).with("delete 1")
+      expect(client).to have_received(:send_command_no_wait).with("c")
+    end
+
+    it "skips BP deletion when no breakpoints are set" do
+      allow(client).to receive(:send_command).with("info breakpoints").and_return("")
+
+      described_class.call(server_context: server_context)
+
+      expect(client).to have_received(:send_command).with("info breakpoints")
+      expect(client).not_to have_received(:send_command).with(/\Adelete/)
+      expect(client).to have_received(:send_command_no_wait).with("c")
+    end
+
+    it "continues even when BP deletion fails" do
+      allow(client).to receive(:send_command).with("info breakpoints").and_raise(
+        GirbMcp::ConnectionError, "lost"
+      )
+
+      described_class.call(server_context: server_context)
+
+      expect(client).to have_received(:send_command_no_wait).with("c")
     end
 
     it "does not send continue for run_script sessions" do

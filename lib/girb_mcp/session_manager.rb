@@ -81,8 +81,18 @@ module GirbMcp
         # Resume connect sessions (no wait_thread) so the target process
         # doesn't stay stuck at the debugger prompt after we disconnect.
         unless info.client.wait_thread
-          msg = "command #{info.client.pid} 500 c\n"
-          info.client.instance_variable_get(:@socket)&.write(msg.b) rescue nil
+          socket = info.client.instance_variable_get(:@socket)
+          next unless socket && !socket.closed?
+
+          pid = info.client.pid
+          # Delete breakpoints #0-#9 (best-effort) then continue.
+          # In signal trap context we can't use send_command, so write raw
+          # protocol messages directly to the socket.
+          (0..9).reverse_each do |n|
+            socket.write("command #{pid} 500 delete #{n}\n".b) rescue nil
+          end
+          socket.write("command #{pid} 500 c\n".b) rescue nil
+          socket.flush rescue nil
           has_connect_sessions = true
         end
       rescue StandardError
@@ -216,15 +226,47 @@ module GirbMcp
           end
         end
 
+        # Resume target processes before disconnecting, so they don't
+        # stay stuck at the debugger prompt after we disconnect.
         stale_sids.each do |sid|
-          info = @sessions.delete(sid)
-          info&.client&.disconnect
+          info = @sessions[sid]
+          next unless info
+
+          resume_before_disconnect(info)
+          @sessions.delete(sid)
+          info.client.disconnect rescue nil
         end
 
         if stale_sids.include?(@default_session_id)
           @default_session_id = @sessions.keys.first
         end
       end
+    end
+
+    # Delete all breakpoints and send continue before disconnecting so the
+    # target process resumes cleanly. Uses send_command (reaper runs in a
+    # normal thread context where blocking is acceptable).
+    def resume_before_disconnect(info)
+      return unless info.client.connected?
+      return if info.client.wait_thread # run_script sessions don't need resume
+
+      # Delete all breakpoints so the process doesn't immediately pause again
+      begin
+        bp_output = info.client.send_command("info breakpoints", timeout: 3)
+        unless bp_output.strip.empty?
+          bp_output.each_line do |line|
+            if (match = line.match(/#(\d+)/))
+              info.client.send_command("delete #{match[1]}", timeout: 3) rescue nil
+            end
+          end
+        end
+      rescue GirbMcp::Error
+        # Best-effort
+      end
+
+      info.client.send_command_no_wait("c")
+    rescue StandardError
+      # Best-effort: don't let resume failure prevent cleanup
     end
 
     def process_alive?(pid)

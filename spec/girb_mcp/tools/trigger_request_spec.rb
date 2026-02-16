@@ -151,6 +151,70 @@ RSpec.describe GirbMcp::Tools::TriggerRequest do
         expect(text).to include("connection refused")
       end
 
+      it "shows breakpoint diagnostics on timeout" do
+        # Use short join timeout to avoid slow test
+        stub_const("GirbMcp::Tools::TriggerRequest::HTTP_JOIN_TIMEOUT", 0.1)
+
+        # Block HTTP thread so http_holder[:done] stays false
+        request_barrier = Queue.new
+        stub_http_response
+        allow(mock_http).to receive(:request) { request_barrier.pop }
+
+        allow(client).to receive(:ensure_paused).and_return("")
+        allow(client).to receive(:continue_and_wait).and_return({
+          type: :timeout,
+          output: "",
+        })
+        allow(client).to receive(:send_command)
+          .with("info breakpoints")
+          .and_return("#1  BP - Line  app/controllers/users_controller.rb:10 (line)")
+
+        response = described_class.call(
+          method: "GET",
+          url: "http://localhost:3000/users",
+          server_context: server_context,
+        )
+
+        request_barrier << nil # Release HTTP thread
+
+        text = response_text(response)
+
+        expect(text).to include("No breakpoint was hit")
+        expect(text).to include("Current breakpoints:")
+        expect(text).to include("users_controller.rb:10")
+        expect(text).to include("Verify that the breakpoint file paths")
+      end
+
+      it "shows no-breakpoints hint on timeout when none set" do
+        stub_const("GirbMcp::Tools::TriggerRequest::HTTP_JOIN_TIMEOUT", 0.1)
+
+        request_barrier = Queue.new
+        stub_http_response
+        allow(mock_http).to receive(:request) { request_barrier.pop }
+
+        allow(client).to receive(:ensure_paused).and_return("")
+        allow(client).to receive(:continue_and_wait).and_return({
+          type: :timeout,
+          output: "",
+        })
+        allow(client).to receive(:send_command)
+          .with("info breakpoints")
+          .and_return("No breakpoints")
+
+        response = described_class.call(
+          method: "GET",
+          url: "http://localhost:3000/users",
+          server_context: server_context,
+        )
+
+        request_barrier << nil
+
+        text = response_text(response)
+
+        expect(text).to include("Current breakpoints: (none set)")
+        expect(text).to include("set_breakpoint")
+      end
+
       it "handles pending breakpoint output from ensure_paused" do
         stub_http_response
 
@@ -587,6 +651,104 @@ RSpec.describe GirbMcp::Tools::TriggerRequest do
 
         expect(text).to include("204")
         expect(text).to include("(empty body)")
+      end
+    end
+
+    context "Rails log capture" do
+      let(:rails_root) { Dir.mktmpdir }
+      let(:log_dir) { File.join(rails_root, "log") }
+      let(:log_file) { File.join(log_dir, "development.log") }
+
+      before { FileUtils.mkdir_p(log_dir) }
+      after { FileUtils.remove_entry(rails_root) }
+
+      it "appends server log to response when available" do
+        # Pre-fill log file with existing content
+        File.write(log_file, "old log line\n")
+
+        # Set up Rails detection for log capture
+        allow(client).to receive(:send_command)
+          .with("p defined?(Rails)")
+          .and_return('=> "constant"')
+        allow(client).to receive(:send_command)
+          .with("p Rails.root.to_s")
+          .and_return("=> \"#{rails_root}\"")
+        allow(client).to receive(:send_command)
+          .with("p Rails.env")
+          .and_return('=> "development"')
+
+        stub_http_response
+
+        # Simulate log being written during request
+        allow(client).to receive(:ensure_paused).and_return("")
+        allow(client).to receive(:continue_and_wait) do
+          File.write(log_file, "old log line\nStarted GET /users\nCompleted 200 OK\n")
+          { type: :interrupted, output: "" }
+        end
+
+        response = described_class.call(
+          method: "GET",
+          url: "http://localhost:3000/users",
+          server_context: server_context,
+        )
+        text = response_text(response)
+
+        expect(text).to include("--- Server Log ---")
+        expect(text).to include("Started GET /users")
+        expect(text).to include("Completed 200 OK")
+        expect(text).not_to include("old log line")
+      end
+
+      it "skips log section when no new log entries" do
+        File.write(log_file, "existing log\n")
+
+        allow(client).to receive(:send_command)
+          .with("p defined?(Rails)")
+          .and_return('=> "constant"')
+        allow(client).to receive(:send_command)
+          .with("p Rails.root.to_s")
+          .and_return("=> \"#{rails_root}\"")
+        allow(client).to receive(:send_command)
+          .with("p Rails.env")
+          .and_return('=> "development"')
+
+        stub_http_response
+
+        allow(client).to receive(:ensure_paused).and_return("")
+        allow(client).to receive(:continue_and_wait).and_return({
+          type: :interrupted, output: "",
+        })
+
+        response = described_class.call(
+          method: "GET",
+          url: "http://localhost:3000/users",
+          server_context: server_context,
+        )
+        text = response_text(response)
+
+        expect(text).not_to include("--- Server Log ---")
+      end
+
+      it "skips log capture for non-Rails processes" do
+        allow(client).to receive(:send_command)
+          .with("p defined?(Rails)")
+          .and_return("=> nil")
+
+        stub_http_response
+
+        allow(client).to receive(:ensure_paused).and_return("")
+        allow(client).to receive(:continue_and_wait).and_return({
+          type: :interrupted, output: "",
+        })
+
+        response = described_class.call(
+          method: "GET",
+          url: "http://localhost:3000/users",
+          server_context: server_context,
+        )
+        text = response_text(response)
+
+        expect(text).not_to include("--- Server Log ---")
       end
     end
   end

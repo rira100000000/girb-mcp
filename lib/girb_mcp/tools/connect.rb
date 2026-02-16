@@ -92,6 +92,8 @@ module GirbMcp
             route_info: route_info,
             auto_escape: auto_escape_enabled)
 
+          escaped = text.include?("Auto-escaped signal trap context")
+
           text += "\nIMPORTANT: The target process is now PAUSED. " \
                   "Use 'continue_execution' to resume it when done investigating, " \
                   "or 'disconnect' to detach (which also resumes the process).\n" \
@@ -100,7 +102,8 @@ module GirbMcp
                   "Initial state:\n#{result[:output]}"
 
           if is_rails
-            text += build_rails_summary(client, result[:output], listen_ports, route_info)
+            text += build_rails_summary(client, result[:output], listen_ports, route_info,
+              escaped: escaped)
           end
 
           # Restore breakpoints from previous sessions
@@ -186,7 +189,7 @@ module GirbMcp
         # Build a comprehensive Rails summary including app info, routes, and models.
         # Uses lightweight (trap-safe) methods that work even in signal trap context.
         # Accepts precomputed route_info to avoid duplicate queries.
-        def build_rails_summary(client, initial_output, listen_ports, route_info = nil)
+        def build_rails_summary(client, initial_output, listen_ports, route_info = nil, escaped: false)
           text = "\n"
 
           # App info header
@@ -223,13 +226,33 @@ module GirbMcp
             text += "\nModels: #{models.join(", ")}\n"
           end
 
-          # Concrete next steps when in gem code or trap context
+          # Always show next steps for Rails apps
           in_gem_code = initial_output&.match?(%r{/gems/|/rubygems/|No sourcefile available})
-          if in_gem_code
+          if escaped
+            # Auto-escape succeeded — we're in app code now
+            text += "\nYou are now in application code context. " \
+                    "All tools (DB queries, model loading, etc.) work normally.\n"
+          elsif in_gem_code
+            # Stuck in gem/framework code — show concrete steps to reach app code
             text += build_next_steps(route_info, listen_ports)
+          else
+            # In app code already — show available actions
+            text += build_app_code_next_steps(route_info, listen_ports)
           end
 
           text += "\nRails tools available: rails_info, rails_routes, rails_model\n"
+          text
+        end
+
+        # Suggest actions when already in application code.
+        def build_app_code_next_steps(route_info, listen_ports)
+          text = "\nYou are in application code. Available actions:\n"
+          text += "  - Use 'get_context' to inspect current variables and call stack\n"
+          text += "  - Use 'set_breakpoint' to add breakpoints on specific actions\n"
+          if listen_ports&.any?
+            text += "  - Use 'trigger_request' to send HTTP requests (auto-resumes the process)\n"
+          end
+          text += "  - Use 'evaluate_code' to run Ruby expressions in the current context\n"
           text
         end
 

@@ -5,17 +5,23 @@ require "mcp"
 module GirbMcp
   module Tools
     class RemoveBreakpoint < MCP::Tool
-      description "[Control] Remove a breakpoint. Can specify: " \
-                  "(1) file + line for line breakpoints, " \
-                  "(2) method for method breakpoints (e.g., 'User#save', 'User.find'), " \
-                  "(3) exception_class for catch breakpoints (e.g., 'NoMethodError'), or " \
-                  "(4) breakpoint_number as a fallback. " \
+      description "[Control] Remove breakpoints. Can specify: " \
+                  "(1) all: true to remove ALL breakpoints at once, " \
+                  "(2) file + line for line breakpoints, " \
+                  "(3) method for method breakpoints (e.g., 'User#save', 'User.find'), " \
+                  "(4) exception_class for catch breakpoints (e.g., 'NoMethodError'), or " \
+                  "(5) breakpoint_number as a fallback. " \
                   "Using named parameters is recommended over breakpoint_number, " \
                   "as numbers can shift when breakpoints are deleted. " \
                   "Use 'get_context' to see current breakpoints."
 
       input_schema(
         properties: {
+          all: {
+            type: "boolean",
+            description: "If true, remove ALL breakpoints at once. " \
+                         "This clears all line, method, and catch breakpoints in a single operation.",
+          },
           breakpoint_number: {
             type: "integer",
             description: "Breakpoint number to remove (shown in breakpoint listing). " \
@@ -48,11 +54,13 @@ module GirbMcp
       )
 
       class << self
-        def call(breakpoint_number: nil, file: nil, line: nil, method: nil, exception_class: nil, session_id: nil, server_context:)
+        def call(all: nil, breakpoint_number: nil, file: nil, line: nil, method: nil, exception_class: nil, session_id: nil, server_context:)
           client = server_context[:session_manager].client(session_id)
           manager = server_context[:session_manager]
 
-          if exception_class
+          if all
+            remove_all_breakpoints(client, manager)
+          elsif exception_class
             remove_catch_breakpoint(client, manager, exception_class)
           elsif method
             remove_method_breakpoint(client, manager, method)
@@ -63,13 +71,28 @@ module GirbMcp
             MCP::Tool::Response.new([{ type: "text", text: output }])
           else
             MCP::Tool::Response.new([{ type: "text",
-              text: "Error: Provide 'file' + 'line', 'method', 'exception_class', or 'breakpoint_number'." }])
+              text: "Error: Provide 'all: true', 'file' + 'line', 'method', 'exception_class', or 'breakpoint_number'." }])
           end
         rescue GirbMcp::Error => e
           MCP::Tool::Response.new([{ type: "text", text: "Error: #{e.message}" }])
         end
 
         private
+
+        def remove_all_breakpoints(client, manager)
+          bp_list = client.send_command("info breakpoints")
+          nums = collect_matching_bp_numbers(bp_list) { |_| true }
+
+          if nums.empty?
+            return MCP::Tool::Response.new([{ type: "text", text: "No breakpoints to remove." }])
+          end
+
+          delete_breakpoints_reversed(client, nums)
+          manager.clear_breakpoint_specs
+
+          MCP::Tool::Response.new([{ type: "text",
+            text: "Deleted all #{nums.size} breakpoint(s)." }])
+        end
 
         def remove_by_location(client, manager, file, line)
           bp_list = client.send_command("info breakpoints")

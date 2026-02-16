@@ -64,7 +64,10 @@ module GirbMcp
     end
 
     def disconnect
-      @socket&.close unless @socket&.closed?
+      if @socket && !@socket.closed?
+        @socket.flush rescue nil
+        @socket.close
+      end
       @socket = nil
       @pid = nil
       @connected = false

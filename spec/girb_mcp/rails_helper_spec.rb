@@ -40,4 +40,31 @@ RSpec.describe GirbMcp::RailsHelper do
       expect(described_class.rails?(client)).to be false
     end
   end
+
+  describe ".log_file_path" do
+    it "returns log file path for Rails app" do
+      allow(client).to receive(:send_command)
+        .with("p Rails.root.to_s")
+        .and_return('=> "/app"')
+      allow(client).to receive(:send_command)
+        .with("p Rails.env")
+        .and_return('=> "development"')
+
+      expect(described_class.log_file_path(client)).to eq("/app/log/development.log")
+    end
+
+    it "returns nil when root is unavailable" do
+      allow(client).to receive(:send_command)
+        .with("p Rails.root.to_s")
+        .and_return("=> nil")
+
+      expect(described_class.log_file_path(client)).to be_nil
+    end
+
+    it "returns nil on error" do
+      allow(client).to receive(:send_command).and_raise(GirbMcp::ConnectionError, "lost")
+
+      expect(described_class.log_file_path(client)).to be_nil
+    end
+  end
 end
