@@ -335,14 +335,17 @@ RSpec.describe GirbMcp::Tools::Connect do
           .and_return('=> "constant"')
       end
 
-      it "shows Rails tools available" do
+      it "shows Rails tools with what each provides" do
         response = described_class.call(server_context: server_context)
         text = response_text(response)
 
-        expect(text).to include("Rails tools available")
+        expect(text).to include("Rails tools")
         expect(text).to include("rails_info")
+        expect(text).to include("database config")
         expect(text).to include("rails_routes")
+        expect(text).to include("full route list")
         expect(text).to include("rails_model")
+        expect(text).to include("column schema")
       end
 
       it "shows app info when available" do
@@ -481,7 +484,7 @@ RSpec.describe GirbMcp::Tools::Connect do
         response = described_class.call(server_context: server_context)
         text = response_text(response)
 
-        expect(text).not_to include("Rails tools available")
+        expect(text).not_to include("Rails tools")
         expect(text).not_to include("=== Rails")
       end
     end

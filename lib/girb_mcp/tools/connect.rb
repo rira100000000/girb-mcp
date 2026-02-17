@@ -240,7 +240,10 @@ module GirbMcp
             text += build_app_code_next_steps(route_info, listen_ports)
           end
 
-          text += "\nRails tools available: rails_info, rails_routes, rails_model\n"
+          text += "\nRails tools (use only when you need details not shown above):\n" \
+                  "  rails_info   → database config (adapter, DB name)\n" \
+                  "  rails_routes → full route list with filtering\n" \
+                  "  rails_model  → column schema, associations, validations for a specific model\n"
           text
         end
 
