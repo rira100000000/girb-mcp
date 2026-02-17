@@ -83,6 +83,20 @@ RSpec.describe GirbMcp::Tools::RemoveBreakpoint do
         text = response_text(response)
         expect(text).to include("No method breakpoint found")
       end
+
+      it "does not partially match similar method names" do
+        bp_list_with_similar = <<~BP
+          #1  BP - Method  SuperUser#save_all (call)
+        BP
+        allow(client).to receive(:send_command).with("info breakpoints").and_return(bp_list_with_similar)
+
+        response = described_class.call(
+          method: "User#save",
+          server_context: server_context,
+        )
+        text = response_text(response)
+        expect(text).to include("No method breakpoint found")
+      end
     end
 
     context "by exception class" do
@@ -104,6 +118,20 @@ RSpec.describe GirbMcp::Tools::RemoveBreakpoint do
         expect(manager).to receive(:remove_breakpoint_specs_matching).with("catch NoMethodError")
 
         described_class.call(exception_class: "NoMethodError", server_context: server_context)
+      end
+
+      it "does not partially match similar exception class names" do
+        bp_list_with_similar = <<~BP
+          #1  BP - Catch  "NoMethodError"
+        BP
+        allow(client).to receive(:send_command).with("info breakpoints").and_return(bp_list_with_similar)
+
+        response = described_class.call(
+          exception_class: "Error",
+          server_context: server_context,
+        )
+        text = response_text(response)
+        expect(text).to include("No catch breakpoint found")
       end
     end
 

@@ -39,7 +39,12 @@ module GirbMcp
           output = GirbMcp::StopEventAnnotator.annotate_breakpoint_hit(output)
           output = GirbMcp::StopEventAnnotator.enrich_stop_context(output, client)
 
-          header = "Method/block returned (stopped at caller's frame)."
+          location = parse_stop_location(output)
+          header = if location
+            "Method/block returned. Now at: #{location}"
+          else
+            "Method/block returned (stopped at caller's frame)."
+          end
           MCP::Tool::Response.new([{ type: "text", text: "#{header}\n\n#{output}" }])
         rescue GirbMcp::SessionError => e
           text = if e.message.include?("session ended") || e.message.include?("finished execution")
@@ -57,6 +62,14 @@ module GirbMcp
           MCP::Tool::Response.new([{ type: "text", text: text }])
         rescue GirbMcp::Error => e
           MCP::Tool::Response.new([{ type: "text", text: "Error: #{e.message}" }])
+        end
+
+        private
+
+        def parse_stop_location(output)
+          # Debug gem output: "=>#0  Class#method at /path/to/file.rb:10"
+          match = output&.match(/=>#\d+\s+.+\s+at\s+(.+:\d+)/)
+          match ? match[1] : nil
         end
       end
     end

@@ -51,10 +51,9 @@ module GirbMcp
             # $__girb_err, allowing us to distinguish errors from normal nil.
             output = client.send_command(build_eval_command(code))
 
-            # Restore $stdout and read captured output
-            client.send_command("$stdout = $__girb_old")
+            # Restore $stdout and read captured output in a single round-trip
+            captured = restore_and_read_stdout(client)
             stdout_redirected = false
-            captured = read_captured_stdout(client)
 
             # Check if evaluation raised an exception
             err_info = read_eval_error(client)
@@ -135,8 +134,16 @@ module GirbMcp
           nil
         end
 
-        def read_captured_stdout(client)
-          result = client.send_command("p $__girb_cap.string")
+        # Restore $stdout and read captured output in a single command.
+        # Combines two round-trips into one.
+        def restore_and_read_stdout(client)
+          result = client.send_command("$stdout = $__girb_old; p $__girb_cap.string")
+          parse_captured_stdout(result)
+        rescue GirbMcp::Error
+          nil
+        end
+
+        def parse_captured_stdout(result)
           cleaned = result.strip.sub(/\A=> /, "")
           return nil if cleaned == '""' || cleaned == "nil" || cleaned.empty?
 
@@ -146,8 +153,6 @@ module GirbMcp
             cleaned = unescape_ruby_string(cleaned)
           end
           cleaned.empty? ? nil : cleaned
-        rescue GirbMcp::Error
-          nil
         end
 
         def unescape_ruby_string(str)

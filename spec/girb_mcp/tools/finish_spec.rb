@@ -14,7 +14,26 @@ RSpec.describe GirbMcp::Tools::Finish do
       response = described_class.call(server_context: server_context)
       text = response_text(response)
       expect(text).to include("Method/block returned")
-      expect(text).to include("caller's frame")
+    end
+
+    it "includes stop location in header when available" do
+      allow(client).to receive(:send_command)
+        .with("finish", timeout: GirbMcp::DebugClient::CONTINUE_TIMEOUT)
+        .and_return("=>#0  UsersController#show at app/controllers/users_controller.rb:45\n=> 45| @user = User.find(params[:id])")
+
+      response = described_class.call(server_context: server_context)
+      text = response_text(response)
+      expect(text).to include("Method/block returned. Now at: app/controllers/users_controller.rb:45")
+    end
+
+    it "falls back to generic header when location cannot be parsed" do
+      allow(client).to receive(:send_command)
+        .with("finish", timeout: GirbMcp::DebugClient::CONTINUE_TIMEOUT)
+        .and_return("some unexpected output")
+
+      response = described_class.call(server_context: server_context)
+      text = response_text(response)
+      expect(text).to include("Method/block returned (stopped at caller's frame).")
     end
 
     it "detects program exit" do

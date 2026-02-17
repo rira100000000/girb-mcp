@@ -29,6 +29,9 @@ module GirbMcp
       # by closing delimiters like ], }, ", or >.
       TRUNCATION_PATTERN = /\.\.\.[\]}"'>)]*\s*\z/
 
+      # Pattern for detecting framework/gem frames in call stack.
+      FRAMEWORK_PATH_PATTERN = %r{/gems/|/\.rbenv/|/\.bundle/|/vendor/bundle/|\[C\]|/ruby/\d}
+
       class << self
         def call(session_id: nil, server_context:)
           client = server_context[:session_manager].client(session_id)
@@ -60,6 +63,7 @@ module GirbMcp
             ["Breakpoints", "info breakpoints"],
           ]
 
+          bt_raw = nil
           sections.each do |title, command|
             output = client.send_command(command)
 
@@ -72,32 +76,37 @@ module GirbMcp
               end
             end
 
+            # Summarize long call stacks by collapsing framework frames
+            if command == "bt"
+              bt_raw = output
+              output = summarize_call_stack(output)
+            end
+
             parts << "=== #{title} ===\n#{output}"
           rescue GirbMcp::TimeoutError
             parts << "=== #{title} ===\n(timed out)"
           end
 
-          # Best-effort: show return value if stopped at a method/block return event.
-          # __return_value__ is only available at return/b_return TracePoint events.
-          begin
-            ret_val = client.send_command("p __return_value__")
-            cleaned = ret_val.strip
-            unless cleaned.include?("NameError") || cleaned.include?("undefined")
-              return_section = "=== Return Value (at return event) ===\n#{cleaned}\n" \
-                               "Note: The current line (=>) has ALREADY been executed. " \
-                               "You are seeing the state AFTER this line ran."
+          # Annotate return events: the return value is shown in bt output (#=>)
+          # and in local variables (%return). Add a note so the agent understands
+          # the current line has already executed.
+          if bt_raw && return_event_frame?(bt_raw)
+            return_note = "=== Stop Event: Return ===\n" \
+                          "The current line (=>) has ALREADY been executed. " \
+                          "You are seeing the state AFTER this line ran.\n" \
+                          "Return value is shown in Call Stack (#=>) and Local Variables (%return)."
 
-              # Check if the return is due to an exception
+            # Check if the return is due to an exception
+            begin
               if (exception_info = client.check_current_exception)
-                return_section += "\n\nException in scope: #{exception_info}\n" \
-                                  "This method/block is returning due to an exception, not a normal return. " \
-                                  "The return value above may be nil or meaningless."
+                return_note += "\n\nException in scope: #{exception_info}\n" \
+                               "This method/block is returning due to an exception, not a normal return."
               end
-
-              parts << return_section
+            rescue GirbMcp::Error
+              # Best-effort
             end
-          rescue GirbMcp::Error
-            # __return_value__ not available at this stop point
+
+            parts << return_note
           end
 
           if total_truncated > 0
@@ -113,6 +122,63 @@ module GirbMcp
         end
 
         private
+
+        # Check if the current frame (=>) in bt output indicates a return event.
+        # The debug gem appends "#=>" to the frame line at return/b_return/c_return events:
+        #   =>#0  Class#method at file.rb:10 #=> return_value
+        def return_event_frame?(bt_output)
+          bt_output.each_line do |line|
+            return line.include?("#=>") if line.include?("=>#")
+          end
+          false
+        end
+
+        # Summarize a long call stack by collapsing consecutive framework frames.
+        # App code frames are preserved; gem/internal frames are collapsed into
+        # summary lines like "  ... 12 framework frames (actionpack, rack, puma) ..."
+        def summarize_call_stack(output)
+          lines = output.lines
+          return output if lines.size <= 15
+
+          result = []
+          gem_group = []
+
+          lines.each do |line|
+            if framework_frame?(line)
+              gem_group << line
+            else
+              if gem_group.any?
+                result << collapse_gem_frames(gem_group)
+                gem_group = []
+              end
+              result << line
+            end
+          end
+          result << collapse_gem_frames(gem_group) if gem_group.any?
+
+          result.join
+        end
+
+        def framework_frame?(line)
+          line.match?(FRAMEWORK_PATH_PATTERN)
+        end
+
+        def collapse_gem_frames(frames)
+          # Extract gem names from paths like /gems/actionpack-7.0.0/lib/...
+          # Gem names always start with a letter, so we skip numeric directories
+          # like /gems/3.3.0/ in paths such as ruby/gems/3.3.0/gems/actionpack-7.0.0/
+          gem_names = frames.filter_map { |f|
+            if (m = f.match(%r{/gems/([a-zA-Z][^/]*?)(?:-\d[\d.]*)?/}))
+              m[1]
+            elsif f.include?("[C]")
+              "C"
+            end
+          }.uniq.sort
+
+          label = gem_names.empty? ? "framework" : gem_names.join(", ")
+          count_label = frames.size == 1 ? "1 framework frame" : "#{frames.size} framework frames"
+          "  ... #{count_label} (#{label}) ...\n"
+        end
 
         # Annotate truncated variable lines with [truncated] marker.
         # Returns [annotated_output, truncated_count].

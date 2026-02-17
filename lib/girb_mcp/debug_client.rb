@@ -416,7 +416,7 @@ module GirbMcp
       else
         raise TimeoutError, "Timeout after #{timeout}s waiting for debugger response. " \
                             "The target process may be busy or stuck. " \
-                            "Try again or use 'run_debug_command' with a longer timeout."
+                            "If this persists, try 'disconnect' and reconnect to reset the debug session."
       end
     end
 

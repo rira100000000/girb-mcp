@@ -345,7 +345,18 @@ module GirbMcp
           # Send GET request in background thread and wait for breakpoint
           result = perform_escape_request(client, url)
 
-          # Clean up the temporary breakpoint
+          unless result
+            # Escape failed: process may still be running after continue_and_wait
+            # timed out. Try to re-pause it so subsequent commands don't all timeout.
+            begin
+              client.ensure_paused(timeout: 3)
+            rescue GirbMcp::Error
+              # Best-effort: if this fails, subsequent commands will also fail,
+              # but at least we tried
+            end
+          end
+
+          # Clean up the temporary breakpoint (only works if process is paused)
           begin
             client.send_command("delete #{bp_number}")
           rescue GirbMcp::Error

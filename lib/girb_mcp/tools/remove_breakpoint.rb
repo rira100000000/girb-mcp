@@ -113,7 +113,7 @@ module GirbMcp
           bp_list = client.send_command("info breakpoints")
 
           nums = collect_matching_bp_numbers(bp_list) do |bp_line|
-            bp_line.include?("BP - Method") && bp_line.include?(method)
+            bp_line.include?("BP - Method") && bp_line.match?(/BP - Method\s+#{Regexp.escape(method)}\b/)
           end
           delete_breakpoints_reversed(client, nums)
 
@@ -129,7 +129,7 @@ module GirbMcp
           bp_list = client.send_command("info breakpoints")
 
           nums = collect_matching_bp_numbers(bp_list) do |bp_line|
-            bp_line.include?("BP - Catch") && bp_line.include?(exception_class)
+            bp_line.include?("BP - Catch") && bp_line.include?("\"#{exception_class}\"")
           end
           delete_breakpoints_reversed(client, nums)
 

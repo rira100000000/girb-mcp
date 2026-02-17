@@ -218,7 +218,7 @@ module GirbMcp
                  "Breakpoint hit:\n#{bp_output}\n\n" \
                  "The request is paused at the breakpoint. " \
                  "Use 'get_context' to inspect variables, " \
-                 "then 'continue_execution' to let the request complete."
+                 "then 'continue_execution' to let the request complete and see the HTTP response."
           MCP::Tool::Response.new([{ type: "text", text: text }])
         end
 

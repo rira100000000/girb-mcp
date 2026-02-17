@@ -68,6 +68,7 @@ RSpec.describe GirbMcp::Tools::TriggerRequest do
         expect(text).to include("users_controller.rb:10")
         expect(text).to include("request sent")
         expect(text).to include("continue_execution")
+        expect(text).to include("see the HTTP response")
       end
 
       it "waits for breakpoint when process is already running" do
