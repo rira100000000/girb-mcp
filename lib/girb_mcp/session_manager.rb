@@ -85,6 +85,9 @@ module GirbMcp
           next unless socket && !socket.closed?
 
           pid = info.client.pid
+          # Restore original SIGINT handler (best-effort, raw protocol).
+          restore_cmd = "p $_girb_orig_int ? (trap('INT',$_girb_orig_int);$_girb_orig_int=nil;:ok) : nil"
+          socket.write("command #{pid} 500 #{restore_cmd}\n".b) rescue nil
           # Delete breakpoints #0-#9 (best-effort) then continue.
           # In signal trap context we can't use send_command, so write raw
           # protocol messages directly to the socket.
@@ -254,6 +257,16 @@ module GirbMcp
     def resume_before_disconnect(info)
       return unless info.client.connected?
       return if info.client.wait_thread # run_script sessions don't need resume
+
+      # Restore original SIGINT handler
+      begin
+        info.client.send_command(
+          "p $_girb_orig_int ? (trap('INT',$_girb_orig_int);$_girb_orig_int=nil;:ok) : nil",
+          timeout: 3,
+        )
+      rescue GirbMcp::Error
+        # Best-effort
+      end
 
       # Delete all breakpoints so the process doesn't immediately pause again
       begin

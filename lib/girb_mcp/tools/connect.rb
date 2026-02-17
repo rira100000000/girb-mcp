@@ -92,6 +92,9 @@ module GirbMcp
             route_info: route_info,
             auto_escape: auto_escape_enabled)
 
+          # Install double Ctrl+C force-quit handler on the target process
+          install_sigint_handler(client)
+
           escaped = text.include?("Auto-escaped signal trap context")
 
           text += "\nIMPORTANT: The target process is now PAUSED. " \
@@ -454,6 +457,22 @@ module GirbMcp
             return parts[1] if parts.size >= 3 && parts[0] == "GET"
           end
           nil
+        end
+
+        # Install a double Ctrl+C force-quit handler on the target process.
+        # First Ctrl+C prints a warning, second within 3s calls exit!(1).
+        # Uses ||= to avoid double-registration on reconnect.
+        # All operations (trap, STDERR.write, exit!) are async-signal-safe.
+        def install_sigint_handler(client)
+          handler_code = "$_girb_int_at=0;" \
+            "$_girb_orig_int||=trap('INT'){" \
+            "t=Process.clock_gettime(Process::CLOCK_MONOTONIC);" \
+            "if t-$_girb_int_at<3;exit!(1);" \
+            "else;$_girb_int_at=t;" \
+            "STDERR.write(\"\\nPress Ctrl+C again within 3s to force quit\\n\")end}"
+          client.send_command("p begin;#{handler_code};:ok;rescue =>e;e.class.name end")
+        rescue GirbMcp::Error
+          # Best-effort: don't fail connect if handler installation fails
         end
 
         # Send an HTTP GET request in a background thread and wait for breakpoint hit.

@@ -43,6 +43,15 @@ module GirbMcp
               # Process already exited
             end
           else
+            # Restore original SIGINT handler before disconnecting
+            begin
+              client.send_command(
+                "p $_girb_orig_int ? (trap('INT',$_girb_orig_int);$_girb_orig_int=nil;:ok) : nil"
+              )
+            rescue GirbMcp::Error
+              # Best-effort
+            end
+
             # For connect sessions (e.g., Rails server): delete all breakpoints
             # then resume the process before disconnecting.
             # Without BP deletion, the process may immediately hit a remaining

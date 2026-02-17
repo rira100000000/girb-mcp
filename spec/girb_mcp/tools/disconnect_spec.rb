@@ -110,5 +110,39 @@ RSpec.describe GirbMcp::Tools::Disconnect do
       expect(text).to include("run_script")
       expect(text).to include("connect")
     end
+
+    it "restores SIGINT handler on disconnect for connect sessions" do
+      allow(client).to receive(:send_command).with("info breakpoints").and_return("")
+      allow(client).to receive(:send_command)
+        .with(/\$_girb_orig_int/)
+        .and_return("=> :ok")
+
+      described_class.call(server_context: server_context)
+
+      expect(client).to have_received(:send_command).with(/\$_girb_orig_int.*trap/)
+    end
+
+    it "does not fail disconnect when SIGINT restore fails" do
+      allow(client).to receive(:send_command)
+        .with(/\$_girb_orig_int/)
+        .and_raise(GirbMcp::ConnectionError, "lost connection")
+      allow(client).to receive(:send_command).with("info breakpoints").and_return("")
+
+      response = described_class.call(server_context: server_context)
+      text = response_text(response)
+
+      expect(text).to include("Disconnected from session")
+    end
+
+    it "does not restore SIGINT handler for run_script sessions" do
+      wait_thread = instance_double(Thread, alive?: true)
+      allow(client).to receive(:wait_thread).and_return(wait_thread)
+      allow(client).to receive(:pid).and_return("999")
+      allow(Process).to receive(:kill)
+
+      described_class.call(server_context: server_context)
+
+      expect(client).not_to have_received(:send_command).with(/\$_girb_orig_int/)
+    end
   end
 end

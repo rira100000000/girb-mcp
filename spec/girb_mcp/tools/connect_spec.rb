@@ -553,5 +553,28 @@ RSpec.describe GirbMcp::Tools::Connect do
         expect(text).not_to include("Listening on:")
       end
     end
+
+    context "SIGINT force-quit handler" do
+      it "installs SIGINT handler on connect" do
+        allow(client).to receive(:send_command)
+          .with(/\$_girb_orig_int/)
+          .and_return('=> :ok')
+
+        described_class.call(server_context: server_context)
+
+        expect(client).to have_received(:send_command).with(/\$_girb_orig_int/)
+      end
+
+      it "does not fail connect when handler installation fails" do
+        allow(client).to receive(:send_command)
+          .with(/\$_girb_orig_int/)
+          .and_raise(GirbMcp::ConnectionError, "lost connection")
+
+        response = described_class.call(server_context: server_context)
+        text = response_text(response)
+
+        expect(text).to include("Connected to debug session")
+      end
+    end
   end
 end
