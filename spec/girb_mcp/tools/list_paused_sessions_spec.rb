@@ -6,17 +6,20 @@ RSpec.describe GirbMcp::Tools::ListPausedSessions do
 
   describe ".call" do
     it "shows message when no sessions" do
+      allow(manager).to receive(:active_sessions).with(include_client: true).and_return([])
+
       response = described_class.call(server_context: server_context)
       text = response_text(response)
       expect(text).to include("No active debug sessions")
     end
 
     it "lists active sessions" do
-      allow(manager).to receive(:active_sessions).and_return([
+      allow(manager).to receive(:active_sessions).with(include_client: true).and_return([
         {
           session_id: "session_123",
           pid: "123",
           connected: true,
+          paused: false,
           connected_at: Time.now,
           last_activity_at: Time.now,
           idle_seconds: 45,
@@ -32,12 +35,63 @@ RSpec.describe GirbMcp::Tools::ListPausedSessions do
       expect(text).to include("45s")
     end
 
+    it "shows paused status and location info" do
+      client = build_mock_client
+      allow(client).to receive(:send_command).with("frame")
+        .and_return("#0  UsersController#show at app/controllers/users_controller.rb:10")
+      allow(client).to receive(:send_command).with("info breakpoints")
+        .and_return("#1  BP - Line  app/controllers/users_controller.rb:10\n#2  BP - Catch  \"NoMethodError\"")
+
+      allow(manager).to receive(:active_sessions).with(include_client: true).and_return([
+        {
+          session_id: "session_123",
+          pid: "123",
+          connected: true,
+          paused: true,
+          connected_at: Time.now,
+          last_activity_at: Time.now,
+          idle_seconds: 5,
+          client: client,
+        },
+      ])
+
+      response = described_class.call(server_context: server_context)
+      text = response_text(response)
+      expect(text).to include("paused")
+      expect(text).to include("Location: app/controllers/users_controller.rb:10 in UsersController#show")
+      expect(text).to include("Breakpoints: 2 set")
+    end
+
+    it "handles errors when querying session details" do
+      client = build_mock_client
+      allow(client).to receive(:send_command).and_raise(GirbMcp::TimeoutError, "timeout")
+
+      allow(manager).to receive(:active_sessions).with(include_client: true).and_return([
+        {
+          session_id: "session_123",
+          pid: "123",
+          connected: true,
+          paused: true,
+          connected_at: Time.now,
+          last_activity_at: Time.now,
+          idle_seconds: 5,
+          client: client,
+        },
+      ])
+
+      response = described_class.call(server_context: server_context)
+      text = response_text(response)
+      expect(text).to include("session_123")
+      expect(text).not_to include("Location:")
+    end
+
     it "formats duration in minutes" do
-      allow(manager).to receive(:active_sessions).and_return([
+      allow(manager).to receive(:active_sessions).with(include_client: true).and_return([
         {
           session_id: "s1",
           pid: "1",
           connected: true,
+          paused: false,
           connected_at: Time.now,
           last_activity_at: Time.now,
           idle_seconds: 125,
@@ -50,11 +104,12 @@ RSpec.describe GirbMcp::Tools::ListPausedSessions do
     end
 
     it "formats duration in hours" do
-      allow(manager).to receive(:active_sessions).and_return([
+      allow(manager).to receive(:active_sessions).with(include_client: true).and_return([
         {
           session_id: "s1",
           pid: "1",
           connected: true,
+          paused: false,
           connected_at: Time.now,
           last_activity_at: Time.now,
           idle_seconds: 3725,
@@ -67,11 +122,12 @@ RSpec.describe GirbMcp::Tools::ListPausedSessions do
     end
 
     it "shows disconnected status" do
-      allow(manager).to receive(:active_sessions).and_return([
+      allow(manager).to receive(:active_sessions).with(include_client: true).and_return([
         {
           session_id: "s1",
           pid: "1",
           connected: false,
+          paused: false,
           connected_at: Time.now,
           last_activity_at: Time.now,
           idle_seconds: 10,

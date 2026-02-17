@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
 require "mcp"
-require "base64"
 require_relative "../rails_helper"
 
 module GirbMcp
@@ -156,82 +155,38 @@ module GirbMcp
         end
 
         def build_columns_section(client, model_name)
-          code = build_columns_script(model_name)
-          encoded = Base64.strict_encode64(code.encode(Encoding::UTF_8))
-          command = "require 'base64'; eval(::Base64.decode64('#{encoded}').force_encoding('UTF-8'))"
-          output = client.send_command(command, timeout: 15)
-          cleaned = clean_output(output)
-          cleaned.empty? ? "Columns:\n  (unable to retrieve)" : cleaned
+          result = RailsHelper.run_base64_script(client, build_columns_script(model_name))
+          result || "Columns:\n  (unable to retrieve)"
         rescue GirbMcp::Error
           "Columns:\n  (unable to retrieve)"
         end
 
         def build_associations_section(client, model_name)
-          code = build_associations_script(model_name)
-          encoded = Base64.strict_encode64(code.encode(Encoding::UTF_8))
-          command = "require 'base64'; eval(::Base64.decode64('#{encoded}').force_encoding('UTF-8'))"
-          output = client.send_command(command, timeout: 15)
-          cleaned = clean_output(output)
-          cleaned.empty? || cleaned == "nil" ? nil : cleaned
+          RailsHelper.run_base64_script(client, build_associations_script(model_name))
         rescue GirbMcp::Error
           nil
         end
 
         def build_validations_section(client, model_name)
-          code = build_validations_script(model_name)
-          encoded = Base64.strict_encode64(code.encode(Encoding::UTF_8))
-          command = "require 'base64'; eval(::Base64.decode64('#{encoded}').force_encoding('UTF-8'))"
-          output = client.send_command(command, timeout: 15)
-          cleaned = clean_output(output)
-          cleaned.empty? || cleaned == "nil" ? nil : cleaned
+          RailsHelper.run_base64_script(client, build_validations_script(model_name))
         rescue GirbMcp::Error
           nil
         end
 
         def build_enums_section(client, model_name)
-          code = build_enums_script(model_name)
-          encoded = Base64.strict_encode64(code.encode(Encoding::UTF_8))
-          command = "require 'base64'; eval(::Base64.decode64('#{encoded}').force_encoding('UTF-8'))"
-          output = client.send_command(command, timeout: 15)
-          cleaned = clean_output(output)
-          cleaned.empty? || cleaned == "nil" ? nil : cleaned
+          RailsHelper.run_base64_script(client, build_enums_script(model_name))
         rescue GirbMcp::Error
           nil
         end
 
         def build_scopes_section(client, model_name)
-          code = build_scopes_script(model_name)
-          encoded = Base64.strict_encode64(code.encode(Encoding::UTF_8))
-          command = "require 'base64'; eval(::Base64.decode64('#{encoded}').force_encoding('UTF-8'))"
-          output = client.send_command(command, timeout: 15)
-          cleaned = clean_output(output)
-          cleaned.empty? || cleaned == "nil" ? nil : cleaned
+          RailsHelper.run_base64_script(client, build_scopes_script(model_name))
         rescue GirbMcp::Error
           nil
         end
 
         def eval_expr(client, expr)
-          result = client.send_command("p #{expr}")
-          cleaned = result.strip.sub(/\A=> /, "")
-          return nil if cleaned == "nil" || cleaned.empty?
-
-          if cleaned.start_with?('"') && cleaned.end_with?('"')
-            cleaned = cleaned[1..-2]
-          end
-          cleaned.empty? ? nil : cleaned
-        rescue GirbMcp::Error
-          nil
-        end
-
-        def clean_output(output)
-          cleaned = output.strip.sub(/\A=> /, "")
-          return "" if cleaned == "nil"
-
-          # Remove surrounding quotes and unescape
-          if cleaned.start_with?('"') && cleaned.end_with?('"')
-            cleaned = cleaned[1..-2].gsub('\\n', "\n")
-          end
-          cleaned
+          RailsHelper.eval_expr(client, expr)
         end
 
         def build_columns_script(model_name)

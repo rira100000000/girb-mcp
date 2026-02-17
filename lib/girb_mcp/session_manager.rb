@@ -166,18 +166,23 @@ module GirbMcp
       cleaned
     end
 
-    # List active sessions with timing info
-    def active_sessions
+    # List active sessions with timing info.
+    # When include_client is true, includes a :client reference for
+    # additional queries (e.g., current stop location).
+    def active_sessions(include_client: false)
       @mutex.synchronize do
         @sessions.map do |sid, info|
-          {
+          entry = {
             session_id: sid,
             pid: info.client.pid,
             connected: info.client.connected?,
+            paused: info.client.paused,
             connected_at: info.connected_at,
             last_activity_at: info.last_activity_at,
             idle_seconds: (Time.now - info.last_activity_at).to_i,
           }
+          entry[:client] = info.client if include_client
+          entry
         end
       end
     end

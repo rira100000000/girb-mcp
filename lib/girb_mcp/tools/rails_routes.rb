@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
 require "mcp"
-require "base64"
 require_relative "../rails_helper"
 
 module GirbMcp
@@ -61,23 +60,11 @@ module GirbMcp
         # Full Base64 script approach — better formatting but may fail in trap context
         # because `require 'base64'` or `puts` may not work.
         def fetch_routes_base64(client, controller, path)
-          code = build_routes_script(controller, path)
-          encoded = Base64.strict_encode64(code.encode(Encoding::UTF_8))
-          command = "require 'base64'; eval(::Base64.decode64('#{encoded}').force_encoding('UTF-8'))"
-          output = client.send_command(command, timeout: 30)
+          result = RailsHelper.run_base64_script(client, build_routes_script(controller, path), timeout: 30)
+          return nil unless result
+          return nil if result.include?("Error loading routes:")
 
-          cleaned = output.strip.sub(/\A=> /, "")
-          return nil if cleaned == "nil" || cleaned.empty?
-
-          if cleaned.start_with?('"') && cleaned.end_with?('"')
-            cleaned = cleaned[1..-2].gsub('\\n', "\n").gsub('\\"', '"')
-          end
-          return nil if cleaned.empty?
-
-          # Check if the script returned an error
-          return nil if cleaned.include?("Error loading routes:")
-
-          cleaned
+          result
         rescue GirbMcp::Error
           nil
         end

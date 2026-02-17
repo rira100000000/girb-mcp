@@ -27,26 +27,22 @@ module GirbMcp
         def call(expression:, session_id: nil, server_context:)
           client = server_context[:session_manager].client(session_id)
 
-          # Collect multiple pieces of information about the object
           parts = []
 
-          # Get the value (primary - if this fails, the expression is likely invalid)
+          # RT 1: Get the pretty-printed value (primary - if this fails, expression is invalid)
           value_output = client.send_command("pp #{expression}")
           parts << "Value:\n#{value_output}"
 
-          # Get the class (secondary - graceful failure)
+          # RT 2: Get class + instance variables in a single command
           begin
-            class_output = client.send_command("p #{expression}.class")
-            parts << "Class: #{class_output.strip}"
+            meta_output = client.send_command(
+              "p [(#{expression}).class.to_s, (#{expression}).instance_variables]",
+            )
+            class_name, ivars = parse_meta(meta_output)
+            parts << "Class: #{class_name}" if class_name
+            parts << "Instance variables: #{ivars}" if ivars
           rescue GirbMcp::TimeoutError
             parts << "Class: (timed out)"
-          end
-
-          # Get instance variables (secondary - graceful failure)
-          begin
-            ivars_output = client.send_command("p #{expression}.instance_variables")
-            parts << "Instance variables: #{ivars_output.strip}"
-          rescue GirbMcp::TimeoutError
             parts << "Instance variables: (timed out)"
           end
 
@@ -58,6 +54,19 @@ module GirbMcp
         end
 
         private
+
+        # Parse combined meta output: => ["ClassName", [:@ivar1, :@ivar2]]
+        # Returns [class_name, ivars_string] or falls back to raw output.
+        def parse_meta(output)
+          cleaned = output.strip.sub(/\A=> /, "")
+          # Match: ["ClassName", [...]]
+          if (match = cleaned.match(/\A\["([^"]*)",\s*(\[.*\])\]\z/))
+            [match[1], match[2]]
+          else
+            # Fallback: return raw output as class info
+            [cleaned, nil]
+          end
+        end
 
         def append_trap_context_note(client, text)
           return text unless client.respond_to?(:trap_context) && client.trap_context

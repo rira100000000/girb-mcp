@@ -15,16 +15,12 @@ module GirbMcp
       class << self
         def call(server_context:)
           manager = server_context[:session_manager]
-          sessions = manager.active_sessions
+          sessions = manager.active_sessions(include_client: true)
 
           if sessions.empty?
             text = "No active debug sessions. Use 'connect' or 'run_script' to start one."
           else
-            lines = sessions.map do |s|
-              status = s[:connected] ? "connected" : "disconnected"
-              idle = format_duration(s[:idle_seconds])
-              "  #{s[:session_id]} (PID: #{s[:pid]}, #{status}, idle: #{idle})"
-            end
+            lines = sessions.map { |s| format_session(s) }
             text = "Active debug sessions:\n#{lines.join("\n")}"
           end
 
@@ -32,6 +28,50 @@ module GirbMcp
         end
 
         private
+
+        def format_session(s)
+          status = s[:connected] ? "connected" : "disconnected"
+          status += ", paused" if s[:paused]
+          idle = format_duration(s[:idle_seconds])
+
+          line = "  #{s[:session_id]} (PID: #{s[:pid]}, #{status}, idle: #{idle})"
+
+          # Query current stop location and breakpoint count from the client
+          client = s[:client]
+          if client&.connected? && client.paused
+            location = query_stop_location(client)
+            line += "\n    Location: #{location}" if location
+
+            bp_count = query_breakpoint_count(client)
+            line += "\n    Breakpoints: #{bp_count}" if bp_count
+          end
+
+          line
+        end
+
+        # Query the current stop location from the debug session.
+        # Returns "file.rb:10 in ClassName#method" or nil.
+        def query_stop_location(client)
+          output = client.send_command("frame")
+          if (match = output.match(/#\d+\s+(.+?)\s+at\s+(.+:\d+)/))
+            "#{match[2]} in #{match[1].strip}"
+          end
+        rescue GirbMcp::Error
+          nil
+        end
+
+        # Query the number of breakpoints set.
+        # Returns a string like "3 set" or nil.
+        def query_breakpoint_count(client)
+          output = client.send_command("info breakpoints")
+          cleaned = output.strip
+          return nil if cleaned.empty? || cleaned.include?("No breakpoints")
+
+          count = cleaned.lines.count { |l| l.match?(/\A\s*#\d+/) }
+          count > 0 ? "#{count} set" : nil
+        rescue GirbMcp::Error
+          nil
+        end
 
         def format_duration(seconds)
           if seconds < 60

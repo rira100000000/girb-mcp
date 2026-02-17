@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "mcp"
+require "base64"
 
 module GirbMcp
   module Tools
@@ -130,11 +131,16 @@ module GirbMcp
         end
 
         # Check condition syntax via RubyVM::InstructionSequence.compile in the target process.
+        # Uses Base64 encoding to safely pass arbitrary condition strings without escaping issues.
         # Returns a warning string if syntax error detected, nil otherwise.
         def validate_condition(client, condition)
-          escaped = condition.gsub("\\", "\\\\\\\\").gsub('"', '\\"')
+          encoded = Base64.strict_encode64(condition.encode(Encoding::UTF_8))
           result = client.send_command(
-            "p begin; RubyVM::InstructionSequence.compile(\"#{escaped}\"); nil; rescue SyntaxError => e; e.message; end",
+            "p begin; require 'base64'; " \
+            "RubyVM::InstructionSequence.compile(Base64.decode64('#{encoded}')); " \
+            "nil; rescue SyntaxError => e; e.message; rescue LoadError; " \
+            "RubyVM::InstructionSequence.compile(#{condition.inspect}); nil; " \
+            "rescue SyntaxError => e; e.message; end",
           )
           cleaned = result.strip.sub(/\A=> /, "")
           return nil if cleaned == "nil" || cleaned.empty?

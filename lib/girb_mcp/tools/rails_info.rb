@@ -1,7 +1,6 @@
 # frozen_string_literal: true
 
 require "mcp"
-require "base64"
 require "yaml"
 require_relative "../rails_helper"
 
@@ -102,38 +101,11 @@ module GirbMcp
         end
 
         def run_info_script(client, code)
-          encoded = Base64.strict_encode64(code.encode(Encoding::UTF_8))
-          command = "require 'base64'; eval(::Base64.decode64('#{encoded}').force_encoding('UTF-8'))"
-          output = client.send_command(command, timeout: 15)
-          cleaned = clean_script_output(output)
-          cleaned.empty? ? nil : cleaned
+          RailsHelper.run_base64_script(client, code)
         end
 
-        # Evaluate a simple Ruby expression and return the cleaned string result.
-        # Returns nil if the result is nil or evaluation fails.
         def eval_expr(client, expr)
-          result = client.send_command("p #{expr}")
-          cleaned = result.strip.sub(/\A=> /, "")
-          return nil if cleaned == "nil" || cleaned.empty?
-
-          # Remove surrounding quotes and unescape Ruby string escapes
-          if cleaned.start_with?('"') && cleaned.end_with?('"')
-            cleaned = cleaned[1..-2]
-            cleaned = cleaned.gsub('\\"', '"').gsub("\\\\", "\\")
-          end
-          cleaned.empty? ? nil : cleaned
-        rescue GirbMcp::Error
-          nil
-        end
-
-        def clean_script_output(output)
-          cleaned = output.strip.sub(/\A=> /, "")
-          return "" if cleaned == "nil"
-
-          if cleaned.start_with?('"') && cleaned.end_with?('"')
-            cleaned = cleaned[1..-2].gsub('\\n', "\n")
-          end
-          cleaned
+          RailsHelper.eval_expr(client, expr)
         end
 
         # Fallback: read config/database.yml via the debug session's File.read.

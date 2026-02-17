@@ -60,7 +60,7 @@ def build_mock_manager(client: nil)
   allow(manager).to receive(:remove_breakpoint_specs_matching)
   allow(manager).to receive(:restore_breakpoints).and_return([])
   allow(manager).to receive(:cleanup_dead_sessions).and_return([])
-  allow(manager).to receive(:active_sessions).and_return([])
+  allow(manager).to receive(:active_sessions).with(any_args).and_return([])
   allow(manager).to receive(:disconnect)
   allow(manager).to receive(:connect).and_return({
     success: true, pid: "12345", output: "stopped at line 1", session_id: "session_12345",

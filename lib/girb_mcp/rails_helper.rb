@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "base64"
+
 module GirbMcp
   module RailsHelper
     module_function
@@ -28,6 +30,30 @@ module GirbMcp
       client.respond_to?(:in_trap_context?) && client.in_trap_context?
     rescue GirbMcp::Error
       false
+    end
+
+    # --- Base64 script execution (NOT trap-safe) ---
+
+    # Execute a multi-line Ruby script via Base64 encoding in the target process.
+    # Returns the cleaned string result, or nil if the script returned nil/empty.
+    # Raises GirbMcp::Error on communication failure.
+    def run_base64_script(client, code, timeout: 15)
+      encoded = Base64.strict_encode64(code.encode(Encoding::UTF_8))
+      command = "require 'base64'; eval(::Base64.decode64('#{encoded}').force_encoding('UTF-8'))"
+      output = client.send_command(command, timeout: timeout)
+      clean_script_output(output)
+    end
+
+    # Clean debug gem output from a script that returns a string value.
+    # Strips "=> " prefix, removes surrounding quotes, and unescapes \\n.
+    def clean_script_output(output)
+      cleaned = output.strip.sub(/\A=> /, "")
+      return nil if cleaned == "nil" || cleaned.empty?
+
+      if cleaned.start_with?('"') && cleaned.end_with?('"')
+        cleaned = cleaned[1..-2].gsub('\\n', "\n").gsub('\\"', '"')
+      end
+      cleaned.empty? ? nil : cleaned
     end
 
     # --- Lightweight methods (trap-safe, no Base64/require/puts) ---
