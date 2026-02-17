@@ -58,6 +58,11 @@ module GirbMcp
           end
 
           MCP::Tool::Response.new([{ type: "text", text: "#{header}\n\n#{content}" }])
+        rescue FileNotFoundError => e
+          MCP::Tool::Response.new([{ type: "text", text:
+            "Error: File not found: #{e.message}\n\n" \
+            "This is a relative path but no active debug session is available to resolve it. " \
+            "Use an absolute path, or connect to a debug session first." }])
         rescue StandardError => e
           MCP::Tool::Response.new([{ type: "text", text: "Error: #{e.class}: #{e.message}" }])
         end
@@ -67,16 +72,24 @@ module GirbMcp
         # Resolve relative paths against the debugged process's working directory.
         # Falls back to MCP server's working directory if no active session.
         def resolve_path(path, server_context)
-          return File.expand_path(path) if path.start_with?("/")
+          return File.expand_path(path) if path.start_with?("/") || path.start_with?("~")
 
           # Try to get the debugged process's working directory
           cwd = remote_cwd(server_context)
           if cwd
             File.join(cwd, path)
           else
-            File.expand_path(path)
+            # No active session — try local resolution but warn in error message
+            local_path = File.expand_path(path)
+            return local_path if File.exist?(local_path)
+
+            # File doesn't exist locally either — raise with helpful context
+            raise FileNotFoundError, path
           end
         end
+
+        # Custom error to distinguish "no session for relative path" from other errors
+        class FileNotFoundError < StandardError; end
 
         def remote_cwd(server_context)
           client = server_context[:session_manager].client

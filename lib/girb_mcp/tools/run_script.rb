@@ -249,19 +249,22 @@ module GirbMcp
         MAX_SKIP_ATTEMPTS = 5
 
         # Check if the debugger stopped at internal code and auto-continue if so.
+        # Loops up to MAX_SKIP_ATTEMPTS times to skip through multiple internal stops.
         # Returns [output, skipped] where skipped is true if we continued past internal code.
         def skip_internal_code(client, output)
+          skipped = false
+
           MAX_SKIP_ATTEMPTS.times do
             break unless INTERNAL_CODE_PATTERNS.any? { |pattern| output.match?(pattern) }
 
             output = client.send_continue
-            return [output, true]
+            skipped = true
           end
 
-          [output, false]
+          [output, skipped]
         rescue GirbMcp::Error
           # If continue fails (e.g., program exited), return what we have
-          [output, false]
+          [output, skipped || false]
         end
 
         def find_available_port

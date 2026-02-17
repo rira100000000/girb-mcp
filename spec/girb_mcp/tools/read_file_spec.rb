@@ -104,6 +104,19 @@ RSpec.describe GirbMcp::Tools::ReadFile do
         expect(text).to include("Error: File not found")
       end
 
+      it "shows helpful error for relative path with no session" do
+        allow(manager).to receive(:client)
+          .and_raise(GirbMcp::SessionError, "No active session")
+
+        response = described_class.call(
+          path: "app/models/user.rb",
+          server_context: server_context,
+        )
+        text = response_text(response)
+        expect(text).to include("no active debug session")
+        expect(text).to include("absolute path")
+      end
+
       it "uses absolute paths as-is" do
         response = described_class.call(path: tmpfile.path, server_context: server_context)
         text = response_text(response)
