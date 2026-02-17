@@ -50,9 +50,18 @@ module GirbMcp
             parts << "Instance variables: (timed out)"
           end
 
-          MCP::Tool::Response.new([{ type: "text", text: parts.join("\n\n") }])
+          text = parts.join("\n\n")
+          text = append_trap_context_note(client, text)
+          MCP::Tool::Response.new([{ type: "text", text: text }])
         rescue GirbMcp::Error => e
           MCP::Tool::Response.new([{ type: "text", text: "Error: #{e.message}" }])
+        end
+
+        private
+
+        def append_trap_context_note(client, text)
+          return text unless client.respond_to?(:trap_context) && client.trap_context
+          "#{text}\n\n[trap context]"
         end
       end
     end

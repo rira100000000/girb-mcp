@@ -19,16 +19,18 @@ RSpec.configure do |config|
 end
 
 # Helper to build a mock DebugClient
-def build_mock_client(connected: true, pid: "12345", paused: true)
+def build_mock_client(connected: true, pid: "12345", paused: true, trap_context: false)
   client = instance_double(GirbMcp::DebugClient,
     connected?: connected,
     pid: pid,
     paused: paused,
+    trap_context: trap_context,
     wait_thread: nil,
     stderr_file: nil,
     stdout_file: nil,
     script_file: nil,
     script_args: nil,
+    pending_http: nil,
   )
   allow(client).to receive(:send_command).and_return("")
   allow(client).to receive(:send_command_no_wait)
@@ -39,11 +41,12 @@ def build_mock_client(connected: true, pid: "12345", paused: true)
   allow(client).to receive(:disconnect)
   allow(client).to receive(:read_stdout_output).and_return(nil)
   allow(client).to receive(:read_stderr_output).and_return(nil)
-  allow(client).to receive(:in_trap_context?).and_return(false)
+  allow(client).to receive(:in_trap_context?).and_return(trap_context)
   allow(client).to receive(:escape_trap_context!).and_return(nil)
   allow(client).to receive(:ensure_paused).and_return("")
   allow(client).to receive(:continue_and_wait).and_return({ type: :timeout, output: "" })
   allow(client).to receive(:wait_for_breakpoint).and_return({ type: :timeout, output: "" })
+  allow(client).to receive(:pending_http=)
   client
 end
 

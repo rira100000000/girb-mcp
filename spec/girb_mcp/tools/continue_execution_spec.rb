@@ -112,5 +112,94 @@ RSpec.describe GirbMcp::Tools::ContinueExecution do
       text = response_text(response)
       expect(text).to include("Error: Connection refused")
     end
+
+    context "pending HTTP response" do
+      it "appends HTTP response when pending_http is present" do
+        http_holder = { response: { status: "200 OK", headers: {}, body: '{"ok": true}' }, error: nil, done: true }
+        http_thread = Thread.new {} # already finished
+        http_thread.join
+
+        allow(client).to receive(:pending_http).and_return({
+          thread: http_thread, holder: http_holder, method: "GET", url: "http://localhost:3000/users",
+        })
+
+        allow(client).to receive(:send_continue).and_return(
+          "Stop by #1  BP - Line  file.rb:20 (line)\n=> 20| render json: @users"
+        )
+
+        response = described_class.call(server_context: server_context)
+        text = response_text(response)
+        expect(text).to include("Execution resumed")
+        expect(text).to include("--- HTTP Response ---")
+        expect(text).to include("HTTP GET http://localhost:3000/users")
+        expect(text).to include("200 OK")
+      end
+
+      it "appends HTTP error when request failed" do
+        http_holder = { response: nil, error: StandardError.new("connection refused"), done: true }
+        http_thread = Thread.new {} # already finished
+        http_thread.join
+
+        allow(client).to receive(:pending_http).and_return({
+          thread: http_thread, holder: http_holder, method: "POST", url: "http://localhost:3000/users",
+        })
+
+        allow(client).to receive(:send_continue).and_return(
+          "Stop by #1  BP - Line  file.rb:20 (line)"
+        )
+
+        response = described_class.call(server_context: server_context)
+        text = response_text(response)
+        expect(text).to include("--- HTTP Response ---")
+        expect(text).to include("Request error: connection refused")
+      end
+
+      it "does not append HTTP section when no pending_http" do
+        allow(client).to receive(:pending_http).and_return(nil)
+        allow(client).to receive(:send_continue).and_return(
+          "Stop by #1  BP - Line  file.rb:20 (line)"
+        )
+
+        response = described_class.call(server_context: server_context)
+        text = response_text(response)
+        expect(text).not_to include("--- HTTP Response ---")
+      end
+
+      it "appends HTTP response on SessionError" do
+        http_holder = { response: { status: "200 OK", headers: {}, body: "ok" }, error: nil, done: true }
+        http_thread = Thread.new {}
+        http_thread.join
+
+        allow(client).to receive(:pending_http).and_return({
+          thread: http_thread, holder: http_holder, method: "GET", url: "http://localhost:3000/",
+        })
+
+        allow(client).to receive(:send_continue).and_raise(
+          GirbMcp::SessionError.new("session ended", final_output: "done")
+        )
+
+        response = described_class.call(server_context: server_context)
+        text = response_text(response)
+        expect(text).to include("--- HTTP Response ---")
+        expect(text).to include("200 OK")
+      end
+
+      it "appends HTTP response on TimeoutError" do
+        http_holder = { response: { status: "200 OK", headers: {}, body: "ok" }, error: nil, done: true }
+        http_thread = Thread.new {}
+        http_thread.join
+
+        allow(client).to receive(:pending_http).and_return({
+          thread: http_thread, holder: http_holder, method: "GET", url: "http://localhost:3000/",
+        })
+
+        allow(client).to receive(:send_continue).and_raise(GirbMcp::TimeoutError, "timeout")
+
+        response = described_class.call(server_context: server_context)
+        text = response_text(response)
+        expect(text).to include("--- HTTP Response ---")
+        expect(text).to include("200 OK")
+      end
+    end
   end
 end

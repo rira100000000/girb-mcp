@@ -84,6 +84,7 @@ RSpec.describe GirbMcp::Tools::GetContext do
 
     context "when in signal trap context" do
       before do
+        allow(client).to receive(:trap_context).and_return(true)
         allow(client).to receive(:in_trap_context?).and_return(true)
       end
 
@@ -107,6 +108,30 @@ RSpec.describe GirbMcp::Tools::GetContext do
         response = described_class.call(server_context: server_context)
         text = response_text(response)
         expect(text).not_to include("Context: Signal Trap")
+      end
+    end
+
+    context "trap context caching" do
+      it "uses cached trap_context value instead of calling in_trap_context?" do
+        allow(client).to receive(:trap_context).and_return(true)
+
+        response = described_class.call(server_context: server_context)
+        text = response_text(response)
+
+        expect(text).to include("=== Context: Signal Trap ===")
+        # Should NOT call in_trap_context? when cached value is available
+        expect(client).not_to have_received(:in_trap_context?)
+      end
+
+      it "falls back to in_trap_context? when cache is nil" do
+        allow(client).to receive(:trap_context).and_return(nil)
+        allow(client).to receive(:in_trap_context?).and_return(false)
+
+        response = described_class.call(server_context: server_context)
+        text = response_text(response)
+
+        expect(text).not_to include("Context: Signal Trap")
+        expect(client).to have_received(:in_trap_context?)
       end
     end
   end

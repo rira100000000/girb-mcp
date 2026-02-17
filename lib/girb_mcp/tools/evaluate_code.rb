@@ -77,6 +77,8 @@ module GirbMcp
             else
               text = output
             end
+            text = append_frame_info(client, text)
+            text = append_trap_context_note(client, text)
             MCP::Tool::Response.new([{ type: "text", text: text }])
           rescue GirbMcp::TimeoutError => e
             MCP::Tool::Response.new([{ type: "text", text: "Error: #{e.message}\n\n" \
@@ -159,6 +161,24 @@ module GirbMcp
             when "'" then "'"
             end
           end
+        end
+
+        # Prepend frame info if the debugger is not at frame 0 (i.e., after up/down).
+        def append_frame_info(client, text)
+          frame_output = client.send_command("frame")
+          # Debug gem output: "#1  ClassName#method at /path/to/file.rb:10" or similar
+          if (match = frame_output.match(/#(\d+)\s+(.+)/))
+            frame_num = match[1].to_i
+            return "Frame ##{frame_num}: #{match[2].strip}\n\n#{text}" if frame_num > 0
+          end
+          text
+        rescue GirbMcp::Error
+          text
+        end
+
+        def append_trap_context_note(client, text)
+          return text unless client.respond_to?(:trap_context) && client.trap_context
+          "#{text}\n\n[trap context]"
         end
 
         # Temporarily remove all catch breakpoints by deleting them.

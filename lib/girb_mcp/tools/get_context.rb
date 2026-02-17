@@ -36,8 +36,14 @@ module GirbMcp
           parts = []
           total_truncated = 0
 
-          # Show trap context warning as the first section
-          if client.respond_to?(:in_trap_context?) && client.in_trap_context?
+          # Show trap context warning as the first section.
+          # Use cached value if available to avoid an extra round-trip.
+          in_trap = if client.respond_to?(:trap_context) && !client.trap_context.nil?
+            client.trap_context
+          elsif client.respond_to?(:in_trap_context?)
+            client.in_trap_context?
+          end
+          if in_trap
             parts << "=== Context: Signal Trap ===\n" \
                      "Restricted: DB queries, require, autoloading, method breakpoints\n" \
                      "Available: evaluate_code (simple expressions), set_breakpoint (file:line), rails_routes\n" \

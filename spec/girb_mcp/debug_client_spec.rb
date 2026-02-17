@@ -121,6 +121,8 @@ RSpec.describe GirbMcp::DebugClient do
       expect(client.connected?).to be false
       expect(client.pid).to be_nil
       expect(client.paused).to be false
+      expect(client.trap_context).to be_nil
+      expect(client.pending_http).to be_nil
     end
   end
 
@@ -128,6 +130,26 @@ RSpec.describe GirbMcp::DebugClient do
     it "starts as false" do
       client = GirbMcp::DebugClient.new
       expect(client.paused).to be false
+    end
+  end
+
+  describe "#trap_context" do
+    it "starts as nil" do
+      client = GirbMcp::DebugClient.new
+      expect(client.trap_context).to be_nil
+    end
+  end
+
+  describe "#pending_http" do
+    it "starts as nil" do
+      client = GirbMcp::DebugClient.new
+      expect(client.pending_http).to be_nil
+    end
+
+    it "can be set and read" do
+      client = GirbMcp::DebugClient.new
+      client.pending_http = { method: "GET", url: "http://localhost:3000" }
+      expect(client.pending_http[:method]).to eq("GET")
     end
   end
 

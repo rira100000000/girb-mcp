@@ -96,6 +96,7 @@ module GirbMcp
             end
           end
 
+          output = append_condition_warning(client, condition, output)
           MCP::Tool::Response.new([{ type: "text", text: output }])
         end
 
@@ -116,7 +117,36 @@ module GirbMcp
             end
           end
 
+          output = append_condition_warning(client, condition, output)
           MCP::Tool::Response.new([{ type: "text", text: output }])
+        end
+
+        # Validate condition syntax and append warning if invalid.
+        def append_condition_warning(client, condition, output)
+          return output unless condition
+
+          warning = validate_condition(client, condition)
+          warning ? "#{output}\n\n#{warning}" : output
+        end
+
+        # Check condition syntax via RubyVM::InstructionSequence.compile in the target process.
+        # Returns a warning string if syntax error detected, nil otherwise.
+        def validate_condition(client, condition)
+          escaped = condition.gsub("\\", "\\\\\\\\").gsub('"', '\\"')
+          result = client.send_command(
+            "p begin; RubyVM::InstructionSequence.compile(\"#{escaped}\"); nil; rescue SyntaxError => e; e.message; end",
+          )
+          cleaned = result.strip.sub(/\A=> /, "")
+          return nil if cleaned == "nil" || cleaned.empty?
+
+          # Remove surrounding quotes
+          cleaned = cleaned[1..-2] if cleaned.start_with?('"') && cleaned.end_with?('"')
+          return nil if cleaned == "nil" || cleaned.empty?
+
+          "WARNING: Condition may have a syntax error: #{cleaned}\n" \
+          "The breakpoint was set but will never fire if the condition is invalid."
+        rescue GirbMcp::Error
+          nil
         end
 
         def set_catch_breakpoint(client, manager, exception_class)

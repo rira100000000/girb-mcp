@@ -21,12 +21,18 @@ module GirbMcp
         },
       )
 
+      HTTP_JOIN_TIMEOUT = 5
+
       class << self
         def call(session_id: nil, server_context:)
           client = server_context[:session_manager].client(session_id)
 
           # Check breakpoint existence before continuing (for timeout message)
           has_breakpoints = check_breakpoints(client)
+
+          # Retrieve and clear pending HTTP info before continuing
+          pending = client.pending_http
+          client.pending_http = nil if pending
 
           output = client.send_continue
 
@@ -37,6 +43,7 @@ module GirbMcp
             text = GirbMcp::ExitMessageBuilder.build_exit_message(
               "Program finished execution.", output, client,
             )
+            text = append_http_response(text, pending)
             return MCP::Tool::Response.new([{ type: "text", text: text }])
           end
 
@@ -44,13 +51,16 @@ module GirbMcp
           output = GirbMcp::StopEventAnnotator.annotate_breakpoint_hit(output)
           output = GirbMcp::StopEventAnnotator.enrich_stop_context(output, client)
 
-          MCP::Tool::Response.new([{ type: "text", text: "Execution resumed.\n\n#{output}" }])
+          text = "Execution resumed.\n\n#{output}"
+          text = append_http_response(text, pending)
+          MCP::Tool::Response.new([{ type: "text", text: text }])
         rescue GirbMcp::SessionError => e
           text = if e.message.include?("session ended") || e.message.include?("finished execution")
             GirbMcp::ExitMessageBuilder.build_exit_message("Program finished execution.", e.final_output, client)
           else
             "Error: #{e.message}"
           end
+          text = append_http_response(text, pending)
           MCP::Tool::Response.new([{ type: "text", text: text }])
         rescue GirbMcp::TimeoutError
           text = if has_breakpoints
@@ -60,6 +70,7 @@ module GirbMcp
             "Process resumed successfully (running normally, no breakpoints set).\n" \
             "Use 'set_breakpoint' to add breakpoints, then 'trigger_request' or wait for the code path to execute."
           end
+          text = append_http_response(text, pending)
           MCP::Tool::Response.new([{ type: "text", text: text }])
         rescue GirbMcp::ConnectionError => e
           text = if e.message.include?("Connection lost") || e.message.include?("connection closed")
@@ -69,12 +80,38 @@ module GirbMcp
           else
             "Error: #{e.message}"
           end
+          text = append_http_response(text, pending)
           MCP::Tool::Response.new([{ type: "text", text: text }])
         rescue GirbMcp::Error => e
           MCP::Tool::Response.new([{ type: "text", text: "Error: #{e.message}" }])
         end
 
         private
+
+        # Join the pending HTTP thread and append the response to the text.
+        def append_http_response(text, pending)
+          return text unless pending
+
+          thread = pending[:thread]
+          holder = pending[:holder]
+          method = pending[:method]
+          url = pending[:url]
+
+          thread.join(HTTP_JOIN_TIMEOUT)
+
+          if holder[:error]
+            "#{text}\n\n--- HTTP Response ---\nHTTP #{method} #{url}\nRequest error: #{holder[:error].message}"
+          elsif holder[:response]
+            formatted = GirbMcp::Tools::TriggerRequest.send(:format_response, holder[:response])
+            "#{text}\n\n--- HTTP Response ---\nHTTP #{method} #{url}\n#{formatted}"
+          elsif holder[:done]
+            "#{text}\n\n--- HTTP Response ---\nHTTP #{method} #{url}\nUnexpected state: request completed without response."
+          else
+            "#{text}\n\n--- HTTP Response ---\nHTTP #{method} #{url}\nRequest still in progress (timed out waiting)."
+          end
+        rescue StandardError
+          text
+        end
 
         # Check if any breakpoints are currently set.
         # Returns true if breakpoints exist, false otherwise.

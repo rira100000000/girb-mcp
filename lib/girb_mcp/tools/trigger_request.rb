@@ -138,7 +138,8 @@ module GirbMcp
           if pending_output
             # Process is paused — check if there's already a breakpoint hit in the pending output
             if pending_output.include?("Stop by")
-              return build_breakpoint_response(client, method, url, pending_output)
+              return build_breakpoint_response(client, method, url, pending_output,
+                                               http_thread: http_thread, http_holder: http_holder)
             end
 
             # Process is confirmed paused. Resume and wait for breakpoint.
@@ -175,7 +176,8 @@ module GirbMcp
         def handle_debug_result(result, client, method, url, http_thread, http_holder, timeout)
           case result[:type]
           when :breakpoint
-            build_breakpoint_response(client, method, url, result[:output])
+            build_breakpoint_response(client, method, url, result[:output],
+                                      http_thread: http_thread, http_holder: http_holder)
 
           when :interrupted
             # HTTP response triggered the interrupt — wait for thread to finish
@@ -200,10 +202,17 @@ module GirbMcp
           end
         end
 
-        def build_breakpoint_response(client, method, url, bp_output)
+        def build_breakpoint_response(client, method, url, bp_output,
+                                      http_thread: nil, http_holder: nil)
           client.cleanup_one_shot_breakpoints(bp_output)
           bp_output = StopEventAnnotator.annotate_breakpoint_hit(bp_output)
           bp_output = StopEventAnnotator.enrich_stop_context(bp_output, client)
+
+          # Save pending HTTP info so continue_execution can retrieve the response
+          if http_thread && http_holder
+            client.pending_http = { thread: http_thread, holder: http_holder,
+                                    method: method, url: url }
+          end
 
           text = "HTTP #{method} #{url} — request sent.\n\n" \
                  "Breakpoint hit:\n#{bp_output}\n\n" \

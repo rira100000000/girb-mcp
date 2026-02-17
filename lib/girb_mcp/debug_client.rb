@@ -13,14 +13,15 @@ module GirbMcp
     # ANSI escape code pattern
     ANSI_ESCAPE = /\e\[[0-9;]*m/
 
-    attr_reader :pid, :connected, :paused
-    attr_accessor :stderr_file, :stdout_file, :wait_thread, :script_file, :script_args
+    attr_reader :pid, :connected, :paused, :trap_context
+    attr_accessor :stderr_file, :stdout_file, :wait_thread, :script_file, :script_args, :pending_http
 
     def initialize
       @socket = nil
       @pid = nil
       @connected = false
       @paused = false
+      @trap_context = nil
       @width = DEFAULT_WIDTH
       @mutex = Mutex.new
       @one_shot_breakpoints = Set.new
@@ -72,6 +73,8 @@ module GirbMcp
       @pid = nil
       @connected = false
       @paused = false
+      @trap_context = nil
+      @pending_http = nil
       cleanup_captured_files
     end
 
@@ -166,7 +169,9 @@ module GirbMcp
     # allocation. Mutex#lock is needed to actually test for trap context restrictions.
     def in_trap_context?
       result = send_command("p begin; Mutex.new.lock; 'normal'; rescue ThreadError; 'trap'; end")
-      result.strip.sub(/\A=> /, "").include?("trap")
+      in_trap = result.strip.sub(/\A=> /, "").include?("trap")
+      @trap_context = in_trap
+      in_trap
     rescue GirbMcp::Error
       false
     end
@@ -185,6 +190,7 @@ module GirbMcp
       if in_trap_context?
         nil # Still in trap context (step didn't escape)
       else
+        @trap_context = false
         output
       end
     rescue GirbMcp::Error
@@ -453,6 +459,7 @@ module GirbMcp
         when /\Ainput (\d+)/
           @pid = $1
           @paused = true
+          @trap_context = false # Breakpoint hit implies normal context
           return { type: :breakpoint, output: output_lines.join("\n") }
         when /\Aask (\d+) (.*)/
           @socket.write("answer #{$1} y\n".b)
