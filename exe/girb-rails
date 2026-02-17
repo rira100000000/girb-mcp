@@ -1,0 +1,127 @@
+#!/usr/bin/env ruby
+# frozen_string_literal: true
+
+class GirbRails
+  DEFAULT_DEBUG_PORT = 12321
+
+  def self.parse_args(argv)
+    debug_port = nil
+    show_help = false
+
+    i = 0
+    while i < argv.length
+      case argv[i]
+      when "--debug-port"
+        i += 1
+        raise ArgumentError, "--debug-port requires a port number" if i >= argv.length
+        debug_port = parse_port(argv[i])
+        i += 1
+      when /\A--debug-port=(.+)\z/
+        debug_port = parse_port($1)
+        i += 1
+      when "-h", "--help"
+        show_help = true
+        i += 1
+      else
+        break
+      end
+    end
+
+    rails_args = argv[i..] || []
+
+    if rails_args.empty? || rails_args.first.start_with?("-")
+      rails_args.unshift("server")
+    end
+
+    { debug_port: debug_port, rails_args: rails_args, show_help: show_help }
+  end
+
+  def self.parse_port(value)
+    port = Integer(value)
+    raise ArgumentError unless port.positive?
+    port
+  rescue ArgumentError, TypeError
+    raise ArgumentError, "--debug-port requires a valid port number, got: #{value.inspect}"
+  end
+
+  def self.build_env(debug_port:, docker:)
+    if docker
+      {
+        "RUBY_DEBUG_HOST" => "0.0.0.0",
+        "RUBY_DEBUG_PORT" => (debug_port || DEFAULT_DEBUG_PORT).to_s,
+      }
+    else
+      env = { "RUBY_DEBUG_OPEN" => "true" }
+      env["RUBY_DEBUG_PORT"] = debug_port.to_s if debug_port
+      env
+    end
+  end
+
+  def self.docker?
+    File.exist?("/.dockerenv")
+  end
+
+  def self.print_help(io = $stdout)
+    io.puts <<~HELP
+      Usage: girb-rails [options] [rails-command] [rails-options]
+
+      Launch a Rails server with Ruby debug gem enabled for girb-mcp debugging.
+
+      Options:
+        --debug-port PORT  Debug port for TCP connection (default: #{DEFAULT_DEBUG_PORT} in Docker)
+        -h, --help         Show this help
+
+      Examples:
+        girb-rails                          # rails server with debug enabled
+        girb-rails s -p 4000                # rails server on port 4000
+        girb-rails --debug-port 3333        # use TCP debug port 3333
+        girb-rails console                  # rails console with debug enabled
+
+      Environment:
+        Outside Docker: Sets RUBY_DEBUG_OPEN=true
+        Inside Docker:  Sets RUBY_DEBUG_HOST=0.0.0.0, RUBY_DEBUG_PORT=PORT
+    HELP
+  end
+
+  def self.run(argv = ARGV)
+    parsed = parse_args(argv)
+
+    if parsed[:show_help]
+      print_help
+      exit 0
+    end
+
+    unless File.exist?("bin/rails")
+      $stderr.puts "Error: bin/rails not found in current directory."
+      $stderr.puts "Run this command from your Rails application root."
+      exit 1
+    end
+
+    env = build_env(debug_port: parsed[:debug_port], docker: docker?)
+    pid = spawn(env, "bin/rails", *parsed[:rails_args])
+
+    force_quit_deadline = nil
+
+    Signal.trap("INT") do
+      if force_quit_deadline && Time.now < force_quit_deadline
+        Process.kill("KILL", pid)
+      else
+        Process.kill("TERM", pid)
+        $stderr.write "\nStopping... Press Ctrl+C again within 3s to force quit\n"
+        force_quit_deadline = Time.now + 3
+      end
+    end
+
+    Signal.trap("TERM") do
+      Process.kill("TERM", pid)
+    end
+
+    _, status = Process.waitpid2(pid)
+    exit(status.exitstatus || 1)
+  rescue ArgumentError => e
+    $stderr.puts "Error: #{e.message}"
+    exit 1
+  end
+end
+
+GirbRails.run unless defined?(RSpec)
