@@ -12,6 +12,17 @@ class Post < ApplicationRecord
   scope :recent, -> { order(published_at: :desc) }
   scope :by_user, ->(user_id) { where(user_id: user_id) }
 
+  # コメント数の多い人気記事を取得（パフォーマンス向上のためメモ化）
+  def self.trending(limit = 5)
+    @trending_posts ||= published
+      .left_joins(:comments)
+      .group(:id)
+      .order("COUNT(comments.id) DESC")
+      .limit(limit)
+      .includes(:user)
+      .to_a
+  end
+
   def summary
     body.to_s.truncate(100)
   end

@@ -164,6 +164,16 @@ girb-mcp --session-timeout 3600  # 1時間
 | `run_script` | rdbg経由でRubyスクリプトを起動して接続 |
 | `trigger_request` | デバッグ中のRailsアプリにHTTPリクエストを送信 |
 
+### Railsツール（自動検出）
+
+Railsプロセスを検出すると自動的に登録されます。
+
+| ツール | 説明 |
+|------|------|
+| `rails_info` | アプリ名・Rails/Rubyバージョン・環境・ルートパスを表示 |
+| `rails_routes` | ルーティング一覧（verb, path, controller#action）、コントローラ・パスでフィルタ可能 |
+| `rails_model` | モデル構造：カラム・アソシエーション・バリデーション・enum・スコープを表示 |
+
 ## ワークフロー例
 
 ### Rubyスクリプトのデバッグ
@@ -210,8 +220,18 @@ Agent: continue_execution()
 
 ### Railsリクエストのデバッグ
 
+`girb-rails` でデバッグ有効状態のRailsサーバーを起動：
+
+```bash
+girb-rails                # RUBY_DEBUG_OPEN=true bin/rails server と同等
+girb-rails s -p 4000      # ポート指定
+girb-rails --debug-port 3333  # TCPデバッグポートを指定（Docker内で便利）
 ```
-Agent: connect(host: "localhost", port: 12345)
+
+エージェントにデバッグを依頼：
+
+```
+Agent: connect()
 Agent: set_breakpoint(file: "app/controllers/users_controller.rb", line: 15)
 Agent: trigger_request(method: "GET", url: "http://localhost:3000/users/1")
 Agent: get_context()

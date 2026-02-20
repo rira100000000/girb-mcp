@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 require "socket"
-require "timeout"
+require "io/wait"
 require "set"
 
 module GirbMcp
@@ -90,17 +90,34 @@ module GirbMcp
       read_captured_file(@stderr_file)
     end
 
-    # Send a debugger command and return the output
+    # Send a debugger command and return the output.
     def send_command(command, timeout: DEFAULT_TIMEOUT)
       raise SessionError, "Not connected to a debug session. Use 'connect' to establish a connection." unless connected?
 
       @mutex.synchronize do
+        debug_log("send_command: paused=#{@paused} cmd=#{command[0, 60]}")
+
+        # Drain stale data from previous operations (e.g., responses from
+        # timed-out commands, late breakpoint `input PID` after continue timeout).
+        # This prevents protocol desync where send_command reads a stale response
+        # instead of the response to the command being sent.
+        drain_stale_data
+
+        unless @paused
+          raise SessionError, "Process is not paused. Cannot send debug commands while the process is running. " \
+                              "Use 'trigger_request' to send an HTTP request (which auto-resumes), " \
+                              "or 'disconnect' and reconnect."
+        end
+
         # Encode as binary to avoid Encoding::CompatibilityError when the
         # command contains non-ASCII characters (e.g., Japanese) and the
         # socket uses ASCII-8BIT encoding.
         msg = "command #{@pid} #{@width} #{command}\n"
         @socket.write(msg.b)
+        @socket.flush
+        debug_log("send_command: written OK, reading response...")
         output = read_until_input(timeout: timeout)
+        debug_log("send_command: got response (#{output.length} bytes)")
         @paused = true
         output
       end
@@ -116,6 +133,7 @@ module GirbMcp
     # breakpoint). Used when resuming a process before disconnecting.
     def send_command_no_wait(command)
       return unless connected?
+      return unless @paused # Sending command while running crashes the reader thread
 
       @mutex.synchronize do
         msg = "command #{@pid} #{@width} #{command}\n"
@@ -130,9 +148,20 @@ module GirbMcp
       # Socket already closed, ignore
     end
 
-    # Send continue and wait longer (execution may take time to hit next breakpoint)
+    # Send continue and wait for the next breakpoint.
+    # Uses continue_and_wait (IO.select-based) instead of send_command to avoid
+    # protocol desync: send_command sets @paused=true on timeout even when no
+    # input prompt was received, causing subsequent commands to read stale responses.
     def send_continue(timeout: CONTINUE_TIMEOUT)
-      send_command("c", timeout: timeout)
+      result = continue_and_wait(timeout: timeout)
+      case result[:type]
+      when :breakpoint
+        result[:output]
+      when :timeout, :timeout_with_output
+        raise TimeoutError, "Timeout after #{timeout}s waiting for breakpoint."
+      when :interrupted
+        result[:output]
+      end
     end
 
     # Check if there is a current exception in scope ($!)
@@ -215,8 +244,7 @@ module GirbMcp
           remaining = [deadline - Time.now, 0.1].min
           break if remaining <= 0
 
-          ready = IO.select([@socket], nil, nil, remaining)
-          break unless ready
+          break unless @socket.wait_readable(remaining)
 
           line = @socket.gets
           break unless line
@@ -233,6 +261,7 @@ module GirbMcp
             return pending_output.join("\n")
           when /\Aask (\d+) (.*)/
             @socket.write("answer #{$1} y\n".b)
+            @socket.flush
           when /\Aquit/
             @connected = false
             @paused = false
@@ -246,6 +275,52 @@ module GirbMcp
       @connected = false
       @paused = false
       nil
+    end
+
+    # Re-pause a running process using the debug gem's `pause` protocol message.
+    # The `pause` message is the ONLY protocol message accepted when the process
+    # is NOT in subsession (running). Sending `command` while not in subsession
+    # crashes the debug gem's reader thread.
+    #
+    # First drains any buffered socket data (in case a breakpoint was hit but the
+    # `input PID` wasn't consumed due to a timeout). If not already paused, sends
+    # the `pause` protocol message which triggers SIGURG internally.
+    #
+    # Returns "" on success (process is paused), nil on timeout/failure.
+    def repause(timeout: 3)
+      return "" if @paused
+      return nil unless connected?
+
+      @mutex.synchronize do
+        return "" if @paused
+
+        # Step 1: Drain buffered data — a breakpoint may have been hit but
+        # the `input PID` wasn't consumed (e.g., after continue_and_wait timeout).
+        drain_socket_buffer
+
+        return "" if @paused
+
+        # Step 2: Send `pause` protocol message. This is the only message the
+        # debug gem's reader thread accepts when not in subsession. It triggers
+        # SIGURG internally, causing a running thread to suspend and enter the
+        # debugger.
+        @socket.write("pause\n".b)
+        @socket.flush
+
+        # Step 3: Wait for `input PID` prompt
+        result = wait_for_pause(timeout)
+
+        # The `pause` protocol message triggers SIGURG, which puts the process
+        # in signal trap context. Mark it so callers can adapt (e.g., avoid
+        # `require` or Mutex operations that hang in trap context).
+        @trap_context = true if result
+
+        result
+      end
+    rescue Errno::EPIPE, Errno::ECONNRESET, IOError => e
+      @connected = false
+      @paused = false
+      raise ConnectionError, "Connection lost: #{e.message}"
     end
 
     # Resume the paused process and wait for the next breakpoint hit.
@@ -346,6 +421,7 @@ module GirbMcp
       cookie = ENV["RUBY_DEBUG_COOKIE"] || "-"
       greeting = "version: #{debug_version} width: #{@width} cookie: #{cookie} nonstop: false\n"
       @socket.write(greeting.b)
+      @socket.flush
     end
 
     def resolve_debug_version
@@ -366,37 +442,31 @@ module GirbMcp
       "1.0.0"
     end
 
+    # Read protocol messages from the socket until an `input` prompt is received.
+    # Uses IO.select for safe, non-interruptible timeout handling (no Timeout.timeout).
     def read_until_input(timeout: DEFAULT_TIMEOUT)
       output_lines = []
-      received_input = false
+      deadline = Time.now + timeout
+      debug_log("read_until_input: start timeout=#{timeout}")
 
-      Timeout.timeout(timeout) do
-        while (line = @socket.gets)
-          # Socket reads are ASCII-8BIT but debug gem output contains UTF-8 text
-          line = line.chomp.force_encoding(Encoding::UTF_8)
-          line = line.scrub unless line.valid_encoding?
-          case line
-          when /\Aout (.*)/
-            output_lines << strip_ansi($1)
-          when /\Ainput (\d+)/
-            @pid = $1
-            received_input = true
-            break
-          when /\Aask (\d+) (.*)/
-            # Auto-answer yes to questions
-            @socket.write("answer #{$1} y\n".b)
-          when /\Aquit/
-            @connected = false
-            final = output_lines.join("\n")
-            raise SessionError.new(
-              "Debug session ended. The target process has finished execution.",
-              final_output: final.empty? ? nil : final,
-            )
-          end
+      while Time.now < deadline
+        remaining = deadline - Time.now
+        break if remaining <= 0
+
+        # wait_readable checks Ruby's internal IO buffer first, then falls back
+        # to the OS-level check. IO.select only checks the OS-level file descriptor
+        # and misses data already buffered by Ruby (e.g., when multiple protocol
+        # lines arrive in a single read), causing spurious timeouts.
+        ready = @socket.wait_readable(remaining)
+        unless ready
+          debug_log("read_until_input: wait_readable returned nil (timeout)")
+          break
         end
 
-        # Socket returned nil (EOF) without receiving input prompt - connection closed
-        unless received_input
+        line = @socket.gets
+        unless line
+          # EOF - connection closed
+          debug_log("read_until_input: EOF!")
           @connected = false
           final = output_lines.join("\n")
           raise ConnectionError.new(
@@ -404,20 +474,44 @@ module GirbMcp
             final_output: final.empty? ? nil : final,
           )
         end
+
+        # Socket reads are ASCII-8BIT but debug gem output contains UTF-8 text
+        line = line.chomp.force_encoding(Encoding::UTF_8)
+        line = line.scrub unless line.valid_encoding?
+        debug_log("read_until_input: line=#{line[0, 80]}")
+
+        case line
+        when /\Aout (.*)/
+          output_lines << strip_ansi($1)
+        when /\Ainput (\d+)/
+          @pid = $1
+          debug_log("read_until_input: got input prompt, returning")
+          return output_lines.join("\n")
+        when /\Aask (\d+) (.*)/
+          # Auto-answer yes to questions
+          @socket.write("answer #{$1} y\n".b)
+          @socket.flush
+        when /\Aquit/
+          @connected = false
+          final = output_lines.join("\n")
+          raise SessionError.new(
+            "Debug session ended. The target process has finished execution.",
+            final_output: final.empty? ? nil : final,
+          )
+        end
       end
 
-      output_lines.join("\n")
-    rescue Timeout::Error
-      # If we got meaningful output before timeout, return it.
-      # Filter out empty lines to avoid treating blank `out` messages as real output.
-      meaningful_output = output_lines.reject { |l| l.strip.empty? }
-      if meaningful_output.any?
-        output_lines.join("\n")
-      else
-        raise TimeoutError, "Timeout after #{timeout}s waiting for debugger response. " \
-                            "The target process may be busy or stuck. " \
-                            "If this persists, try 'disconnect' and reconnect to reset the debug session."
-      end
+      # Timeout — always raise. Returning partial output without `input PID`
+      # causes protocol desync: send_command sets @paused=true even though the
+      # debug gem hasn't finished processing the command.
+      final = output_lines.join("\n")
+      debug_log("read_until_input: TIMEOUT lines=#{output_lines.size}")
+      raise TimeoutError.new(
+        "Timeout after #{timeout}s waiting for debugger response. " \
+        "The target process may be busy or stuck. " \
+        "If this persists, try 'disconnect' and reconnect to reset the debug session.",
+        final_output: final.empty? ? nil : final,
+      )
     end
 
     # Non-blocking read that uses IO.select instead of Timeout.timeout.
@@ -426,9 +520,22 @@ module GirbMcp
     def read_until_input_interruptible(timeout:, interrupt_check: nil)
       output_lines = []
       deadline = Time.now + timeout
+      debug_log("read_interruptible: start timeout=#{timeout}")
 
       while Time.now < deadline
         if interrupt_check&.call
+          debug_log("read_interruptible: interrupt_check=true, draining...")
+          # Before returning :interrupted, drain any buffered data. A breakpoint
+          # may have been hit just before the interrupt — its `input PID` could
+          # already be in the socket buffer. Prefer :breakpoint over :interrupted
+          # to keep @paused consistent and avoid needing SIGURG-based repause.
+          drain_socket_buffer(output_lines)
+          if @paused
+            debug_log("read_interruptible: drain found breakpoint!")
+            @trap_context = false
+            return { type: :breakpoint, output: output_lines.join("\n") }
+          end
+          debug_log("read_interruptible: returning :interrupted")
           return { type: :interrupted, output: output_lines.join("\n") }
         end
 
@@ -436,8 +543,7 @@ module GirbMcp
         wait_time = [0.5, remaining].min
         break if wait_time <= 0
 
-        ready = IO.select([@socket], nil, nil, wait_time)
-        next unless ready
+        next unless @socket.wait_readable(wait_time)
 
         line = @socket.gets
         unless line
@@ -460,9 +566,11 @@ module GirbMcp
           @pid = $1
           @paused = true
           @trap_context = false # Breakpoint hit implies normal context
+          debug_log("read_interruptible: got input prompt → :breakpoint")
           return { type: :breakpoint, output: output_lines.join("\n") }
         when /\Aask (\d+) (.*)/
           @socket.write("answer #{$1} y\n".b)
+          @socket.flush
         when /\Aquit/
           @connected = false
           @paused = false
@@ -474,7 +582,45 @@ module GirbMcp
         end
       end
 
-      # Timeout
+      debug_log("read_interruptible: main loop ended, entering grace period")
+      # Timeout — but the breakpoint might have JUST arrived. Do a short grace
+      # period to catch `input PID` that was buffered right at the deadline.
+      # Without this, the stale `input PID` left in the socket causes protocol
+      # desync on subsequent commands.
+      grace_deadline = Time.now + 1
+      while Time.now < grace_deadline
+        remaining = grace_deadline - Time.now
+        break if remaining <= 0
+        break unless @socket.wait_readable(remaining)
+
+        line = @socket.gets
+        break unless line
+
+        line = line.chomp.force_encoding(Encoding::UTF_8)
+        line = line.scrub unless line.valid_encoding?
+
+        case line
+        when /\Aout (.*)/
+          output_lines << strip_ansi($1)
+        when /\Ainput (\d+)/
+          @pid = $1
+          @paused = true
+          @trap_context = false
+          return { type: :breakpoint, output: output_lines.join("\n") }
+        when /\Aask (\d+) (.*)/
+          @socket.write("answer #{$1} y\n".b)
+          @socket.flush
+        when /\Aquit/
+          @connected = false
+          @paused = false
+          final = output_lines.join("\n")
+          raise SessionError.new(
+            "Debug session ended.",
+            final_output: final.empty? ? nil : final,
+          )
+        end
+      end
+
       meaningful = output_lines.reject { |l| l.strip.empty? }
       output = output_lines.join("\n")
       if meaningful.any?
@@ -482,6 +628,120 @@ module GirbMcp
       else
         { type: :timeout, output: output }
       end
+    end
+
+    # Drain ALL stale data from the socket buffer without blocking.
+    # Unlike drain_socket_buffer, this does NOT stop at the first `input PID`.
+    # It consumes everything available, tracking the LAST `input PID` seen.
+    # This is essential for recovering from protocol desync (e.g., when a
+    # previous send_command timed out and its response is still in the buffer).
+    # Must be called inside @mutex.synchronize.
+    def drain_stale_data
+      last_input_pid = nil
+
+      while @socket&.wait_readable(0)
+        line = @socket.gets
+        break unless line
+
+        line = line.chomp.force_encoding(Encoding::UTF_8)
+        line = line.scrub unless line.valid_encoding?
+
+        case line
+        when /\Ainput (\d+)/
+          last_input_pid = $1
+        when /\Aask (\d+) (.*)/
+          @socket.write("answer #{$1} y\n".b)
+          @socket.flush
+        when /\Aquit/
+          @connected = false
+          @paused = false
+          return
+        end
+        # `out` lines are silently discarded (stale data)
+      end
+
+      if last_input_pid
+        @pid = last_input_pid
+        @paused = true
+      end
+    end
+
+    # Drain all buffered data from the socket without blocking.
+    # This catches `input PID` that may have been buffered (e.g., from a
+    # breakpoint hit during a continue_and_wait timeout or interrupt).
+    # Sets @paused = true if `input PID` is found.
+    # Optionally appends drained `out` lines to the provided array.
+    def drain_socket_buffer(output_lines = nil)
+      while @socket.wait_readable(0)
+        line = @socket.gets
+        return unless line
+
+        line = line.chomp.force_encoding(Encoding::UTF_8)
+        line = line.scrub unless line.valid_encoding?
+
+        case line
+        when /\Ainput (\d+)/
+          @pid = $1
+          @paused = true
+          return
+        when /\Aout (.*)/
+          output_lines << strip_ansi($1) if output_lines
+        when /\Aask (\d+) (.*)/
+          @socket.write("answer #{$1} y\n".b)
+          @socket.flush
+        when /\Aquit/
+          @connected = false
+          @paused = false
+          return
+        end
+      end
+    end
+
+    # Wait for `input PID` prompt after sending a `pause` protocol message.
+    # Returns "" on success (process paused), nil on timeout.
+    def wait_for_pause(timeout)
+      deadline = Time.now + timeout
+
+      while Time.now < deadline
+        remaining = deadline - Time.now
+        break if remaining <= 0
+
+        break unless @socket.wait_readable(remaining)
+
+        line = @socket.gets
+        break unless line
+
+        line = line.chomp.force_encoding(Encoding::UTF_8)
+        line = line.scrub unless line.valid_encoding?
+
+        case line
+        when /\Ainput (\d+)/
+          @pid = $1
+          @paused = true
+          return ""
+        when /\Aout/
+          # Consume output during pause
+        when /\Aask (\d+) (.*)/
+          @socket.write("answer #{$1} y\n".b)
+          @socket.flush
+        when /\Aquit/
+          @connected = false
+          @paused = false
+          return nil
+        end
+      end
+
+      nil # Timeout
+    end
+
+    DEBUG_LOG_PATH = "/tmp/girb_debug.log"
+
+    def debug_log(msg)
+      File.open(DEBUG_LOG_PATH, "a") do |f|
+        f.puts "[#{Time.now.strftime('%H:%M:%S.%L')}] #{msg}"
+      end
+    rescue StandardError
+      # ignore
     end
 
     def strip_ansi(str)

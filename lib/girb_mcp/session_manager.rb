@@ -6,8 +6,12 @@ module GirbMcp
     DEFAULT_TIMEOUT = 30 * 60
     # Reaper interval: check every 60 seconds
     REAPER_INTERVAL = 60
+    # How long to remember reaped sessions for diagnostic messages
+    RECENTLY_REAPED_TTL = 10 * 60
 
     SessionInfo = Struct.new(:client, :connected_at, :last_activity_at, keyword_init: true)
+
+    attr_reader :timeout
 
     def initialize(timeout: DEFAULT_TIMEOUT)
       @sessions = {}
@@ -16,6 +20,7 @@ module GirbMcp
       @mutex = Mutex.new
       @reaper_thread = nil
       @breakpoint_specs = [] # Breakpoint commands to restore across sessions
+      @recently_reaped = {} # { sid => { reason:, pid:, reaped_at: } }
       start_reaper
     end
 
@@ -46,7 +51,25 @@ module GirbMcp
         raise SessionError, "No active debug session. Use the 'connect' tool first." unless sid
 
         info = @sessions[sid]
-        raise SessionError, "Session '#{sid}' not found. Use 'list_paused_sessions' to see active sessions." unless info
+        unless info
+          if (reaped = @recently_reaped[sid])
+            elapsed = (Time.now - reaped[:reaped_at]).to_i
+            reason_msg = case reaped[:reason]
+              when :idle_timeout
+                "was automatically disconnected after #{format_elapsed(@timeout)} of inactivity"
+              when :process_died
+                "was removed because the target process (PID #{reaped[:pid]}) exited"
+              when :socket_closed
+                "was removed because the debug socket connection was lost"
+              else
+                "was removed"
+              end
+            raise SessionError,
+              "Session '#{sid}' #{reason_msg} (#{format_elapsed(elapsed)} ago). " \
+              "Use 'connect' to start a new session."
+          end
+          raise SessionError, "Session '#{sid}' not found. Use 'list_paused_sessions' to see active sessions."
+        end
         raise SessionError, "Session '#{sid}' is disconnected. Use 'connect' to reconnect." unless info.client.connected?
 
         info.last_activity_at = Time.now
@@ -147,23 +170,31 @@ module GirbMcp
     # Returns an array of cleaned-up session info hashes.
     def cleanup_dead_sessions
       cleaned = []
+      now = Time.now
 
       @mutex.synchronize do
-        dead_sids = @sessions.each_with_object([]) do |(sid, info), acc|
-          unless process_alive?(info.client.pid) && info.client.connected?
-            acc << sid
+        dead_sids = @sessions.each_with_object({}) do |(sid, info), acc|
+          unless process_alive?(info.client.pid)
+            acc[sid] = :process_died
+          else
+            unless info.client.connected?
+              acc[sid] = :socket_closed
+            end
           end
         end
 
-        dead_sids.each do |sid|
+        dead_sids.each do |sid, reason|
           info = @sessions.delete(sid)
           cleaned << { session_id: sid, pid: info.client.pid }
+          @recently_reaped[sid] = { reason: reason, pid: info.client.pid, reaped_at: now }
           info.client.disconnect
         end
 
-        if dead_sids.include?(@default_session_id)
+        if dead_sids.key?(@default_session_id)
           @default_session_id = @sessions.keys.first
         end
+
+        cleanup_recently_reaped(now)
       end
 
       cleaned
@@ -183,6 +214,7 @@ module GirbMcp
             connected_at: info.connected_at,
             last_activity_at: info.last_activity_at,
             idle_seconds: (Time.now - info.last_activity_at).to_i,
+            timeout_seconds: @timeout,
           }
           entry[:client] = info.client if include_client
           entry
@@ -212,42 +244,45 @@ module GirbMcp
 
     def reap_stale_sessions
       now = Time.now
-      stale_sids = []
+      stale = {} # { sid => reason }
 
       @mutex.synchronize do
         @sessions.each do |sid, info|
           # Remove sessions whose target process has died
           unless process_alive?(info.client.pid)
-            stale_sids << sid
+            stale[sid] = :process_died
             next
           end
 
           # Remove sessions that lost their socket connection
           unless info.client.connected?
-            stale_sids << sid
+            stale[sid] = :socket_closed
             next
           end
 
           # Remove sessions that have been idle too long
           if (now - info.last_activity_at) > @timeout
-            stale_sids << sid
+            stale[sid] = :idle_timeout
           end
         end
 
         # Resume target processes before disconnecting, so they don't
         # stay stuck at the debugger prompt after we disconnect.
-        stale_sids.each do |sid|
+        stale.each do |sid, reason|
           info = @sessions[sid]
           next unless info
 
           resume_before_disconnect(info)
           @sessions.delete(sid)
+          @recently_reaped[sid] = { reason: reason, pid: info.client.pid, reaped_at: now }
           info.client.disconnect rescue nil
         end
 
-        if stale_sids.include?(@default_session_id)
+        if stale.key?(@default_session_id)
           @default_session_id = @sessions.keys.first
         end
+
+        cleanup_recently_reaped(now)
       end
     end
 
@@ -294,6 +329,20 @@ module GirbMcp
       true
     rescue Errno::ESRCH, Errno::EPERM
       false
+    end
+
+    def cleanup_recently_reaped(now)
+      @recently_reaped.delete_if { |_, v| (now - v[:reaped_at]) > RECENTLY_REAPED_TTL }
+    end
+
+    def format_elapsed(seconds)
+      if seconds < 60
+        "#{seconds}s"
+      elsif seconds < 3600
+        "#{seconds / 60}m"
+      else
+        "#{seconds / 3600}h #{(seconds % 3600) / 60}m"
+      end
     end
   end
 end

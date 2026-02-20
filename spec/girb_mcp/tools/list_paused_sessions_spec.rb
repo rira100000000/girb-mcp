@@ -138,5 +138,84 @@ RSpec.describe GirbMcp::Tools::ListPausedSessions do
       text = response_text(response)
       expect(text).to include("disconnected")
     end
+
+    it "shows remaining time when plenty of time left" do
+      allow(manager).to receive(:active_sessions).with(include_client: true).and_return([
+        {
+          session_id: "s1",
+          pid: "1",
+          connected: true,
+          paused: false,
+          connected_at: Time.now,
+          last_activity_at: Time.now,
+          idle_seconds: 60,
+          timeout_seconds: 1800,
+        },
+      ])
+
+      response = described_class.call(server_context: server_context)
+      text = response_text(response)
+      expect(text).to include("29m 0s remaining")
+      expect(text).not_to include("WARNING")
+    end
+
+    it "shows warning when less than 5 minutes remaining" do
+      allow(manager).to receive(:active_sessions).with(include_client: true).and_return([
+        {
+          session_id: "s1",
+          pid: "1",
+          connected: true,
+          paused: false,
+          connected_at: Time.now,
+          last_activity_at: Time.now,
+          idle_seconds: 1620,
+          timeout_seconds: 1800,
+        },
+      ])
+
+      response = described_class.call(server_context: server_context)
+      text = response_text(response)
+      expect(text).to include("3m 0s remaining")
+      expect(text).to include("WARNING: expiring soon")
+    end
+
+    it "shows expired warning when timeout exceeded" do
+      allow(manager).to receive(:active_sessions).with(include_client: true).and_return([
+        {
+          session_id: "s1",
+          pid: "1",
+          connected: true,
+          paused: false,
+          connected_at: Time.now,
+          last_activity_at: Time.now,
+          idle_seconds: 2000,
+          timeout_seconds: 1800,
+        },
+      ])
+
+      response = described_class.call(server_context: server_context)
+      text = response_text(response)
+      expect(text).to include("EXPIRED")
+    end
+
+    it "shows footer note about session expiry" do
+      allow(manager).to receive(:active_sessions).with(include_client: true).and_return([
+        {
+          session_id: "s1",
+          pid: "1",
+          connected: true,
+          paused: false,
+          connected_at: Time.now,
+          last_activity_at: Time.now,
+          idle_seconds: 10,
+          timeout_seconds: 1800,
+        },
+      ])
+
+      response = described_class.call(server_context: server_context)
+      text = response_text(response)
+      expect(text).to include("Sessions expire after inactivity")
+      expect(text).to include("Any tool call resets the timer")
+    end
   end
 end

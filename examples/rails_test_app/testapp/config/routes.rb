@@ -3,6 +3,7 @@ Rails.application.routes.draw do
 
   resources :posts, only: [:index, :show, :create, :update] do
     collection do
+      get :trending
       get :search
     end
   end

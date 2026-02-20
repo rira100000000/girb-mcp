@@ -176,6 +176,26 @@ RSpec.describe GirbMcp::DebugClient do
     end
   end
 
+  describe "#repause" do
+    it "returns empty string when already paused" do
+      client = GirbMcp::DebugClient.new
+      client.instance_variable_set(:@paused, true)
+      expect(client.repause).to eq("")
+    end
+
+    it "returns nil when not connected" do
+      client = GirbMcp::DebugClient.new
+      expect(client.repause).to be_nil
+    end
+
+    it "returns nil when socket is nil" do
+      client = GirbMcp::DebugClient.new
+      client.instance_variable_set(:@connected, true)
+      # connected? returns false because @socket is nil
+      expect(client.repause).to be_nil
+    end
+  end
+
   describe "#continue_and_wait" do
     it "raises SessionError when not connected" do
       client = GirbMcp::DebugClient.new
@@ -191,6 +211,119 @@ RSpec.describe GirbMcp::DebugClient do
       expect { client.wait_for_breakpoint }.to raise_error(
         GirbMcp::SessionError, /Not connected/
       )
+    end
+  end
+
+  # Helper to set up a client with a simulated socket (bidirectional socket pair).
+  # Returns [client, server_socket] — write protocol data to server_socket,
+  # the client reads/writes via its internal socket.
+  def setup_client_with_socket
+    client_sock, server_sock = Socket.pair(:UNIX, :STREAM, 0)
+    client = GirbMcp::DebugClient.new
+    client.instance_variable_set(:@socket, client_sock)
+    client.instance_variable_set(:@connected, true)
+    client.instance_variable_set(:@pid, "12345")
+    [client, server_sock]
+  end
+
+  describe "#send_command (protocol desync prevention)" do
+    it "raises SessionError when process is not paused and buffer is empty" do
+      client, server = setup_client_with_socket
+      client.instance_variable_set(:@paused, false)
+
+      expect { client.send_command("list") }.to raise_error(
+        GirbMcp::SessionError, /not paused/
+      )
+    ensure
+      server.close rescue nil
+    end
+
+    it "recovers @paused from stale input PID in buffer" do
+      client, server = setup_client_with_socket
+      client.instance_variable_set(:@paused, false)
+
+      # Write stale data (simulating a late breakpoint after continue timeout)
+      server.write("out Stop by #1  BP - Line  app/models/user.rb:10\n")
+      server.write("input 12345\n")
+      sleep 0.01 # Let data arrive in the buffer
+
+      # Also write the response that the command will get (in a separate thread
+      # to avoid blocking — the command hasn't been sent yet)
+      Thread.new do
+        sleep 0.1
+        server.write("out => nil\n")
+        server.write("input 12345\n")
+      end
+
+      result = client.send_command("p nil", timeout: 2)
+      expect(result).to include("nil")
+      expect(client.paused).to be true
+    ensure
+      server.close rescue nil
+    end
+
+    it "drains multiple stale responses before sending" do
+      client, server = setup_client_with_socket
+      client.instance_variable_set(:@paused, false)
+
+      # Simulate two stale command responses in the buffer
+      server.write("out => 1\n")
+      server.write("input 12345\n")
+      server.write("out => 2\n")
+      server.write("input 12345\n")
+      sleep 0.01
+
+      # The actual response for the new command
+      Thread.new do
+        sleep 0.1
+        server.write("out => 3\n")
+        server.write("input 12345\n")
+      end
+
+      result = client.send_command("p 3", timeout: 2)
+      expect(result).to include("3")
+      expect(client.paused).to be true
+    ensure
+      server.close rescue nil
+    end
+  end
+
+  describe "#send_command (read_until_input timeout)" do
+    it "always raises TimeoutError when input PID is not received" do
+      client, server = setup_client_with_socket
+      client.instance_variable_set(:@paused, true)
+
+      # Write partial output AFTER the command is sent (simulating a slow command
+      # that produces output but never finishes)
+      Thread.new do
+        sleep 0.05
+        server.write("out partial output line 1\n")
+        server.write("out partial output line 2\n")
+      end
+
+      expect { client.send_command("slow_cmd", timeout: 0.5) }.to raise_error(
+        GirbMcp::TimeoutError
+      ) do |error|
+        expect(error.final_output).to include("partial output line 1")
+        expect(error.final_output).to include("partial output line 2")
+      end
+    ensure
+      server.close rescue nil
+    end
+
+    it "does not silently return partial output on timeout" do
+      client, server = setup_client_with_socket
+      client.instance_variable_set(:@paused, true)
+
+      # Write meaningful output but no input PID
+      server.write("out => [1, 2, 3]\n")
+
+      # Previously this would return "=> [1, 2, 3]" instead of raising
+      expect { client.send_command("p [1,2,3]", timeout: 0.5) }.to raise_error(
+        GirbMcp::TimeoutError
+      )
+    ensure
+      server.close rescue nil
     end
   end
 end

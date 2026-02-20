@@ -71,10 +71,10 @@ RSpec.describe GirbMcp::Tools::TriggerRequest do
         expect(text).to include("see the HTTP response")
       end
 
-      it "waits for breakpoint when process is already running" do
+      it "uses wait_for_breakpoint when process is already running" do
         stub_http_response
 
-        allow(client).to receive(:ensure_paused).and_return(nil) # process running
+        allow(client).to receive(:paused).and_return(false) # process running
         allow(client).to receive(:wait_for_breakpoint).and_return({
           type: :breakpoint,
           output: "Stop by #1  BP - Line  app/controllers/users_controller.rb:10 (line)",
@@ -88,7 +88,7 @@ RSpec.describe GirbMcp::Tools::TriggerRequest do
         text = response_text(response)
 
         expect(text).to include("Breakpoint hit")
-        expect(client).not_to have_received(:continue_and_wait)
+        expect(client).to have_received(:wait_for_breakpoint)
       end
 
       it "returns HTTP response when interrupted (no breakpoint hit)" do

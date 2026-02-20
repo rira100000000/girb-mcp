@@ -22,6 +22,7 @@ module GirbMcp
           else
             lines = sessions.map { |s| format_session(s) }
             text = "Active debug sessions:\n#{lines.join("\n")}"
+            text += "\n\nNote: Sessions expire after inactivity. Any tool call resets the timer."
           end
 
           MCP::Tool::Response.new([{ type: "text", text: text }])
@@ -35,6 +36,18 @@ module GirbMcp
           idle = format_duration(s[:idle_seconds])
 
           line = "  #{s[:session_id]} (PID: #{s[:pid]}, #{status}, idle: #{idle})"
+
+          # Show remaining time before timeout
+          if s[:timeout_seconds]
+            remaining = s[:timeout_seconds] - s[:idle_seconds]
+            if remaining > 300
+              line += "\n    Timeout: #{format_duration(remaining)} remaining"
+            elsif remaining > 0
+              line += "\n    Timeout: #{format_duration(remaining)} remaining (WARNING: expiring soon)"
+            else
+              line += "\n    Timeout: EXPIRED (will be reaped on next check)"
+            end
+          end
 
           # Query current stop location and breakpoint count from the client
           client = s[:client]

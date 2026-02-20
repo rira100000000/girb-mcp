@@ -6,6 +6,7 @@ class DashboardController < ApplicationController
       comments: Comment.count,
       published_posts: Post.published.count
     }
+    @trending = Post.trending(3)
 
     render html: <<~HTML.html_safe
       <!DOCTYPE html>
@@ -19,6 +20,10 @@ class DashboardController < ApplicationController
           <li>Comments: #{@stats[:comments]}</li>
           <li>Published: #{@stats[:published_posts]}</li>
         </ul>
+        <h2>Trending Posts</h2>
+        <ol>
+          #{@trending.map { |p| "<li>#{p.title} (#{p.comments.size} comments)</li>" }.join}
+        </ol>
       </body>
       </html>
     HTML

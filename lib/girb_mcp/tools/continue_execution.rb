@@ -70,6 +70,11 @@ module GirbMcp
             "Process resumed successfully (running normally, no breakpoints set).\n" \
             "Use 'set_breakpoint' to add breakpoints, then 'trigger_request' or wait for the code path to execute."
           end
+          timeout_sec = server_context[:session_manager]&.timeout
+          if timeout_sec
+            text += "\n\nNote: The debug session will remain active for " \
+                    "#{timeout_sec / 60} minutes of inactivity. Any tool call resets the timer."
+          end
           text = append_http_response(text, pending)
           MCP::Tool::Response.new([{ type: "text", text: text }])
         rescue GirbMcp::ConnectionError => e

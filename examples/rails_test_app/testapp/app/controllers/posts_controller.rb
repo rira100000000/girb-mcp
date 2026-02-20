@@ -32,17 +32,37 @@ class PostsController < ApplicationController
     end
   end
 
-  # 検索エンドポイント（デバッグ向け：N+1問題あり）
-  def search
-    query = params[:q].to_s
-    @posts = Post.where("title LIKE ?", "%#{query}%")
-
-    # 意図的なN+1（デバッグで発見させる）
-    results = @posts.map do |post|
+  # 人気記事の取得
+  def trending
+    posts = Post.trending
+    render json: posts.map { |post|
       {
         id: post.id,
         title: post.title,
         author: post.user.name,
+        comments_count: post.comments.size
+      }
+    }
+  end
+
+  # 検索エンドポイント（公開済み記事のみ対象）
+  def search
+    query = params[:q].to_s
+    scope = Post.published
+
+    # ユーザーでフィルタリング
+    if params[:user_id].present?
+      scope = Post.by_user(params[:user_id])
+    end
+
+    scope = scope.where("title LIKE ?", "%#{query}%") if query.present?
+
+    results = scope.map do |post|
+      {
+        id: post.id,
+        title: post.title,
+        author: post.user.name,
+        status: post.status,
         comments_count: post.comments.count
       }
     end

@@ -91,6 +91,17 @@ RSpec.describe GirbMcp::Tools::ContinueExecution do
         expect(text).to include("resumed successfully")
         expect(text).to include("no breakpoints set")
       end
+
+      it "includes session lifetime note" do
+        allow(client).to receive(:send_command)
+          .with("info breakpoints")
+          .and_return("No breakpoints")
+
+        response = described_class.call(server_context: server_context)
+        text = response_text(response)
+        expect(text).to include("30 minutes of inactivity")
+        expect(text).to include("Any tool call resets the timer")
+      end
     end
 
     it "handles ConnectionError for lost connection" do

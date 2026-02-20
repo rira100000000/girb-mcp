@@ -90,11 +90,16 @@ module GirbMcp
           log_capture = nil
           begin
             client = manager.client(session_id)
-            if method != "GET" && should_disable_csrf?(skip_csrf, client)
-              csrf_disabled = temporarily_disable_csrf(client)
+            # Only send debug commands if the process is paused (at an input prompt).
+            # After a continue_execution timeout, the process is running and sending
+            # commands would violate the debug protocol, causing connection loss.
+            if client.paused
+              if method != "GET" && should_disable_csrf?(skip_csrf, client)
+                csrf_disabled = temporarily_disable_csrf(client)
+              end
+              # Snapshot log file position before request for Rails log capture
+              log_capture = start_log_capture(client)
             end
-            # Snapshot log file position before request for Rails log capture
-            log_capture = start_log_capture(client)
           rescue GirbMcp::SessionError
             client = nil
           end
@@ -122,22 +127,15 @@ module GirbMcp
         private
 
         def handle_with_debug_session(client, method, url, headers, body, timeout)
-          # Start HTTP request in a background thread
           http_holder = { response: nil, error: nil, done: false }
-          http_thread = Thread.new do
-            http_holder[:response] = send_http_request(method, url, headers, body, timeout)
-          rescue StandardError => e
-            http_holder[:error] = e
-          ensure
-            http_holder[:done] = true
-          end
 
-          # Determine process state and act accordingly
-          pending_output = client.ensure_paused(timeout: 2)
+          if client.paused
+            # Start HTTP request in a background thread (concurrent with continue)
+            http_thread = start_http_thread(method, url, headers, body, timeout, http_holder)
 
-          if pending_output
-            # Process is paused — check if there's already a breakpoint hit in the pending output
-            if pending_output.include?("Stop by")
+            pending_output = client.ensure_paused(timeout: 2)
+
+            if pending_output&.include?("Stop by")
               return build_breakpoint_response(client, method, url, pending_output,
                                                http_thread: http_thread, http_holder: http_holder)
             end
@@ -146,8 +144,9 @@ module GirbMcp
             # The HTTP request (sent concurrently) will trigger the breakpoint.
             result = client.continue_and_wait(timeout: timeout) { http_holder[:done] }
           else
-            # Process is already running (e.g., after continue_execution).
-            # Just wait for a breakpoint hit from the HTTP request.
+            # Process is running (e.g., after continue_execution timeout).
+            # Start HTTP request, then wait for the breakpoint to be hit.
+            http_thread = start_http_thread(method, url, headers, body, timeout, http_holder)
             result = client.wait_for_breakpoint(timeout: timeout) { http_holder[:done] }
           end
 
@@ -385,6 +384,16 @@ module GirbMcp
           content
         rescue StandardError
           nil
+        end
+
+        def start_http_thread(method, url, headers, body, timeout, http_holder)
+          Thread.new do
+            http_holder[:response] = send_http_request(method, url, headers, body, timeout)
+          rescue StandardError => e
+            http_holder[:error] = e
+          ensure
+            http_holder[:done] = true
+          end
         end
 
         def send_http_request(method, url, headers, body, timeout)

@@ -166,6 +166,16 @@ The session manager also detects and cleans up sessions whose target process has
 | `run_script` | Start a Ruby script under rdbg and connect to it |
 | `trigger_request` | Send an HTTP request to a Rails app under debug |
 
+### Rails Tools (auto-detected)
+
+These tools are automatically registered when a Rails process is detected.
+
+| Tool | Description |
+|------|-------------|
+| `rails_info` | Show app name, Rails/Ruby versions, environment, root path |
+| `rails_routes` | Show routes (verb, path, controller#action), filterable by controller or path |
+| `rails_model` | Show model structure: columns, associations, validations, enums, scopes |
+
 ## Workflows
 
 ### Debug a Ruby script
@@ -212,8 +222,18 @@ Agent: continue_execution()
 
 ### Debug a Rails request
 
+Start your Rails server with debug enabled using `girb-rails`:
+
+```bash
+girb-rails                # equivalent to RUBY_DEBUG_OPEN=true bin/rails server
+girb-rails s -p 4000      # specify port
+girb-rails --debug-port 3333  # use specific TCP debug port (useful in Docker)
 ```
-Agent: connect(host: "localhost", port: 12345)
+
+Then ask the agent to debug:
+
+```
+Agent: connect()
 Agent: set_breakpoint(file: "app/controllers/users_controller.rb", line: 15)
 Agent: trigger_request(method: "GET", url: "http://localhost:3000/users/1")
 Agent: get_context()

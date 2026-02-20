@@ -30,6 +30,13 @@ module GirbMcp
         def call(code:, session_id: nil, server_context:)
           client = server_context[:session_manager].client(session_id)
 
+          # In trap context (e.g., after SIGURG-based repause), `require` and
+          # Mutex operations hang. Use a simplified evaluation path that avoids
+          # stdout redirect (which needs `require "stringio"`).
+          if client.trap_context
+            return call_in_trap_context(client, code)
+          end
+
           stdout_redirected = false
           suspended_catch_bps = []
 
@@ -38,9 +45,11 @@ module GirbMcp
             # firing on exceptions raised during code evaluation
             suspended_catch_bps = suspend_catch_breakpoints(client)
 
-            # Redirect $stdout to capture puts/print output
+            # Redirect $stdout to capture puts/print output.
+            # Use StringIO directly (always available in debug gem sessions)
+            # instead of `require "stringio"` which hangs in trap context.
             client.send_command(
-              'require "stringio"; $__girb_cap = StringIO.new; $__girb_old = $stdout; $stdout = $__girb_cap',
+              '$__girb_cap = StringIO.new; $__girb_old = $stdout; $stdout = $__girb_cap',
             )
             stdout_redirected = true
 
@@ -100,6 +109,37 @@ module GirbMcp
         end
 
         private
+
+        # Simplified evaluation path for trap context (after SIGURG-based repause).
+        # Avoids `require`, Mutex, and stdout redirect — all of which hang in trap context.
+        # Only uses simple expressions that are safe in restricted context.
+        def call_in_trap_context(client, code)
+          # Use `p` instead of `pp` (pp may trigger autoload in some cases)
+          # Single-line code only; multi-line code with newlines can't use Base64 (require hangs)
+          if code.include?("\n")
+            output = client.send_command(
+              "p(begin; eval(#{code.gsub("\n", ";").inspect}); " \
+              'rescue => __e; "#{__e.class}: #{__e.message}"; end)',
+            )
+          else
+            output = client.send_command(
+              "p(begin; (#{code}); " \
+              'rescue => __e; "#{__e.class}: #{__e.message}"; end)',
+            )
+          end
+
+          text = output
+          text = append_trap_context_note(client, text)
+          MCP::Tool::Response.new([{ type: "text", text: text }])
+        rescue GirbMcp::TimeoutError => e
+          MCP::Tool::Response.new([{ type: "text", text: "Error: #{e.message}\n\n" \
+            "In trap context, some expressions may hang. Use simple expressions only.\n" \
+            "To escape trap context: set_breakpoint + trigger_request." }])
+        rescue GirbMcp::Error => e
+          text = "Error: #{e.message}"
+          text += "\n\n[trap context]" if client.trap_context
+          MCP::Tool::Response.new([{ type: "text", text: text }])
+        end
 
         # Build a debug command that evaluates the given code.
         # The code is wrapped in begin/rescue to capture exceptions in

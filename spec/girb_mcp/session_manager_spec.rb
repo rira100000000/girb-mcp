@@ -15,6 +15,16 @@ RSpec.describe GirbMcp::SessionManager do
     it "has a reaper interval of 60 seconds" do
       expect(GirbMcp::SessionManager::REAPER_INTERVAL).to eq(60)
     end
+
+    it "has a recently reaped TTL of 10 minutes" do
+      expect(GirbMcp::SessionManager::RECENTLY_REAPED_TTL).to eq(10 * 60)
+    end
+  end
+
+  describe "#timeout" do
+    it "returns the configured timeout" do
+      expect(manager.timeout).to eq(3600)
+    end
   end
 
   describe "#client" do
@@ -27,6 +37,34 @@ RSpec.describe GirbMcp::SessionManager do
     it "raises SessionError for unknown session_id" do
       expect { manager.client("nonexistent") }.to raise_error(
         GirbMcp::SessionError, /not found/
+      )
+    end
+
+    it "raises detailed error for recently reaped session (idle_timeout)" do
+      reaped = manager.instance_variable_get(:@recently_reaped)
+      reaped["session_42"] = { reason: :idle_timeout, pid: "42", reaped_at: Time.now - 120 }
+      manager.instance_variable_set(:@default_session_id, "session_42")
+
+      expect { manager.client("session_42") }.to raise_error(
+        GirbMcp::SessionError, /inactivity.*2m ago.*Use 'connect'/
+      )
+    end
+
+    it "raises detailed error for recently reaped session (process_died)" do
+      reaped = manager.instance_variable_get(:@recently_reaped)
+      reaped["session_99"] = { reason: :process_died, pid: "99", reaped_at: Time.now - 30 }
+
+      expect { manager.client("session_99") }.to raise_error(
+        GirbMcp::SessionError, /PID 99.*exited.*30s ago/
+      )
+    end
+
+    it "raises detailed error for recently reaped session (socket_closed)" do
+      reaped = manager.instance_variable_get(:@recently_reaped)
+      reaped["session_77"] = { reason: :socket_closed, pid: "77", reaped_at: Time.now - 5 }
+
+      expect { manager.client("session_77") }.to raise_error(
+        GirbMcp::SessionError, /socket connection was lost.*5s ago/
       )
     end
   end
@@ -78,6 +116,17 @@ RSpec.describe GirbMcp::SessionManager do
   describe "#active_sessions" do
     it "returns empty array when no sessions" do
       expect(manager.active_sessions).to eq([])
+    end
+
+    it "includes timeout_seconds in each entry" do
+      client = build_mock_client
+      sessions = manager.instance_variable_get(:@sessions)
+      sessions["test"] = GirbMcp::SessionManager::SessionInfo.new(
+        client: client, connected_at: Time.now, last_activity_at: Time.now,
+      )
+
+      result = manager.active_sessions
+      expect(result.first[:timeout_seconds]).to eq(3600)
     end
   end
 
@@ -146,6 +195,88 @@ RSpec.describe GirbMcp::SessionManager do
   describe "#cleanup_dead_sessions" do
     it "returns empty array when no sessions" do
       expect(manager.cleanup_dead_sessions).to eq([])
+    end
+  end
+
+  describe "recently_reaped tracking" do
+    it "records reaped sessions in reap_stale_sessions" do
+      client = build_mock_client(connected: true, pid: "555")
+      allow(client).to receive(:connected?).and_return(true)
+
+      sessions = manager.instance_variable_get(:@sessions)
+      sessions["stale_session"] = GirbMcp::SessionManager::SessionInfo.new(
+        client: client, connected_at: Time.now, last_activity_at: Time.now - 7200,
+      )
+
+      allow(manager).to receive(:process_alive?).and_return(true)
+
+      manager.send(:reap_stale_sessions)
+
+      reaped = manager.instance_variable_get(:@recently_reaped)
+      expect(reaped).to have_key("stale_session")
+      expect(reaped["stale_session"][:reason]).to eq(:idle_timeout)
+      expect(reaped["stale_session"][:pid]).to eq("555")
+    end
+
+    it "records process_died reason" do
+      client = build_mock_client(connected: true, pid: "666")
+      allow(client).to receive(:connected?).and_return(true)
+
+      sessions = manager.instance_variable_get(:@sessions)
+      sessions["dead_session"] = GirbMcp::SessionManager::SessionInfo.new(
+        client: client, connected_at: Time.now, last_activity_at: Time.now,
+      )
+
+      allow(manager).to receive(:process_alive?).and_return(false)
+
+      manager.send(:reap_stale_sessions)
+
+      reaped = manager.instance_variable_get(:@recently_reaped)
+      expect(reaped["dead_session"][:reason]).to eq(:process_died)
+    end
+
+    it "records socket_closed reason" do
+      client = build_mock_client(connected: false, pid: "777")
+
+      sessions = manager.instance_variable_get(:@sessions)
+      sessions["closed_session"] = GirbMcp::SessionManager::SessionInfo.new(
+        client: client, connected_at: Time.now, last_activity_at: Time.now,
+      )
+
+      allow(manager).to receive(:process_alive?).and_return(true)
+
+      manager.send(:reap_stale_sessions)
+
+      reaped = manager.instance_variable_get(:@recently_reaped)
+      expect(reaped["closed_session"][:reason]).to eq(:socket_closed)
+    end
+
+    it "cleans up expired entries from recently_reaped" do
+      reaped = manager.instance_variable_get(:@recently_reaped)
+      reaped["old_session"] = { reason: :idle_timeout, pid: "111", reaped_at: Time.now - 700 }
+      reaped["recent_session"] = { reason: :process_died, pid: "222", reaped_at: Time.now - 10 }
+
+      manager.send(:cleanup_recently_reaped, Time.now)
+
+      expect(reaped).to have_key("recent_session")
+      expect(reaped).not_to have_key("old_session")
+    end
+
+    it "records reaped sessions in cleanup_dead_sessions" do
+      client = build_mock_client(connected: false, pid: "888")
+
+      sessions = manager.instance_variable_get(:@sessions)
+      sessions["dead"] = GirbMcp::SessionManager::SessionInfo.new(
+        client: client, connected_at: Time.now, last_activity_at: Time.now,
+      )
+
+      allow(manager).to receive(:process_alive?).and_return(true)
+
+      manager.cleanup_dead_sessions
+
+      reaped = manager.instance_variable_get(:@recently_reaped)
+      expect(reaped).to have_key("dead")
+      expect(reaped["dead"][:reason]).to eq(:socket_closed)
     end
   end
 

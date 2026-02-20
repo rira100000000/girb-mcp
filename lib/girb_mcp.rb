@@ -28,5 +28,12 @@ module GirbMcp
     end
   end
 
-  class TimeoutError < Error; end
+  class TimeoutError < Error
+    attr_reader :final_output
+
+    def initialize(message = nil, final_output: nil)
+      super(message)
+      @final_output = final_output
+    end
+  end
 end

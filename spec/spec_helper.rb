@@ -44,6 +44,7 @@ def build_mock_client(connected: true, pid: "12345", paused: true, trap_context:
   allow(client).to receive(:in_trap_context?).and_return(trap_context)
   allow(client).to receive(:escape_trap_context!).and_return(nil)
   allow(client).to receive(:ensure_paused).and_return("")
+  allow(client).to receive(:repause).and_return("")
   allow(client).to receive(:continue_and_wait).and_return({ type: :timeout, output: "" })
   allow(client).to receive(:wait_for_breakpoint).and_return({ type: :timeout, output: "" })
   allow(client).to receive(:pending_http=)
@@ -62,6 +63,7 @@ def build_mock_manager(client: nil)
   allow(manager).to receive(:cleanup_dead_sessions).and_return([])
   allow(manager).to receive(:active_sessions).with(any_args).and_return([])
   allow(manager).to receive(:disconnect)
+  allow(manager).to receive(:timeout).and_return(1800)
   allow(manager).to receive(:connect).and_return({
     success: true, pid: "12345", output: "stopped at line 1", session_id: "session_12345",
   })
