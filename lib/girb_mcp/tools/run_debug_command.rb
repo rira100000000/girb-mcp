@@ -29,6 +29,7 @@ module GirbMcp
         def call(command:, session_id: nil, server_context:)
           manager = server_context[:session_manager]
           client = manager.client(session_id)
+          client.auto_repause!
 
           output = client.send_command(command)
 

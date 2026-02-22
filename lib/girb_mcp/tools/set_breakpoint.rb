@@ -59,6 +59,7 @@ module GirbMcp
         def call(file: nil, line: nil, method: nil, exception_class: nil, condition: nil, one_shot: nil, session_id: nil, server_context:)
           manager = server_context[:session_manager]
           client = manager.client(session_id)
+          client.auto_repause!
 
           if exception_class
             set_catch_breakpoint(client, manager, exception_class)

@@ -57,6 +57,7 @@ module GirbMcp
         def call(all: nil, breakpoint_number: nil, file: nil, line: nil, method: nil, exception_class: nil, session_id: nil, server_context:)
           client = server_context[:session_manager].client(session_id)
           manager = server_context[:session_manager]
+          client.auto_repause!
 
           if all
             remove_all_breakpoints(client, manager)

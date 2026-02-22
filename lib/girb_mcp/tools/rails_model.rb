@@ -28,6 +28,7 @@ module GirbMcp
       class << self
         def call(model_name: nil, session_id: nil, server_context:)
           client = server_context[:session_manager].client(session_id)
+          client.auto_repause!
           RailsHelper.require_rails!(client)
 
           # List models when model_name is omitted
@@ -65,6 +66,10 @@ module GirbMcp
 
           # Scopes
           section = build_scopes_section(client, model_name)
+          parts << section if section
+
+          # Callbacks
+          section = build_callbacks_section(client, model_name)
           parts << section if section
 
           text = parts.compact.join("\n\n")
@@ -175,6 +180,12 @@ module GirbMcp
 
         def build_enums_section(client, model_name)
           RailsHelper.run_base64_script(client, build_enums_script(model_name))
+        rescue GirbMcp::Error
+          nil
+        end
+
+        def build_callbacks_section(client, model_name)
+          RailsHelper.run_base64_script(client, build_callbacks_script(model_name))
         rescue GirbMcp::Error
           nil
         end
@@ -301,6 +312,37 @@ module GirbMcp
               end
               if scope_list && !scope_list.empty?
                 "Scopes:\\n  " + scope_list.map(&:to_s).join(", ")
+              end
+            rescue => e
+              nil
+            end
+          RUBY
+        end
+
+        def build_callbacks_script(model_name)
+          <<~RUBY
+            begin
+              callback_types = %w[save create update destroy validate]
+              sections = []
+              callback_types.each do |type|
+                method_name = "_\#{type}_callbacks"
+                next unless #{model_name}.respond_to?(method_name)
+                chain = #{model_name}.public_send(method_name)
+                entries = []
+                chain.each do |cb|
+                  filter = cb.filter
+                  next unless filter.is_a?(Symbol)
+                  entries << [cb.kind.to_s, filter.to_s]
+                end
+                unless entries.empty?
+                  lines = entries.map { |kind, filter| "    " + kind.ljust(7) + " :" + filter }
+                  sections << "  " + type + ":\\n" + lines.join("\\n")
+                end
+              end
+              if sections.empty?
+                nil
+              else
+                "Callbacks:\\n" + sections.join("\\n")
               end
             rescue => e
               nil

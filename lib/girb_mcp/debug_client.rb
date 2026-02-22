@@ -277,6 +277,22 @@ module GirbMcp
       nil
     end
 
+    # Automatically re-pause the process if it's running.
+    # Returns false if already paused, true if repause was performed.
+    # Raises SessionError if the process cannot be re-paused (e.g., blocked on I/O).
+    def auto_repause!
+      return false if @paused
+
+      result = repause(timeout: 3)
+      if result.nil?
+        raise SessionError, "Process is not paused and could not be re-paused automatically. " \
+                            "The process may be blocked on I/O. " \
+                            "Set a breakpoint and use 'trigger_request' to pause at a specific point, " \
+                            "or 'disconnect' and 'connect' to re-attach."
+      end
+      true
+    end
+
     # Re-pause a running process using the debug gem's `pause` protocol message.
     # The `pause` message is the ONLY protocol message accepted when the process
     # is NOT in subsession (running). Sending `command` while not in subsession

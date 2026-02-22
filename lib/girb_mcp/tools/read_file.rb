@@ -93,6 +93,7 @@ module GirbMcp
 
         def remote_cwd(server_context)
           client = server_context[:session_manager].client
+          client.auto_repause!
           result = client.send_command("p Dir.pwd")
           cleaned = result.strip.sub(/\A=> /, "")
           return nil if cleaned == "nil" || cleaned.empty?

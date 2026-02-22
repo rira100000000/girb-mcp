@@ -45,6 +45,7 @@ def build_mock_client(connected: true, pid: "12345", paused: true, trap_context:
   allow(client).to receive(:escape_trap_context!).and_return(nil)
   allow(client).to receive(:ensure_paused).and_return("")
   allow(client).to receive(:repause).and_return("")
+  allow(client).to receive(:auto_repause!).and_return(false)
   allow(client).to receive(:continue_and_wait).and_return({ type: :timeout, output: "" })
   allow(client).to receive(:wait_for_breakpoint).and_return({ type: :timeout, output: "" })
   allow(client).to receive(:pending_http=)

@@ -221,13 +221,17 @@ module GirbMcp
           MCP::Tool::Response.new([{ type: "text", text: text }])
         end
 
+        RUNNING_HINT = "The process is now running — to debug further, " \
+                       "set breakpoints and use 'trigger_request' again, " \
+                       "or use 'connect' to re-pause the process."
+
         def build_http_done_response(method, url, http_holder, client: nil)
           if http_holder[:error]
-            text = "HTTP #{method} #{url}\n\nRequest error: #{http_holder[:error].message}"
+            text = "HTTP #{method} #{url}\n\nRequest error: #{http_holder[:error].message}\n\n#{RUNNING_HINT}"
           elsif http_holder[:response]
-            text = "HTTP #{method} #{url}\n\nNo breakpoint hit.\n\n#{format_response(http_holder[:response])}"
+            text = "HTTP #{method} #{url}\n\nNo breakpoint hit. #{RUNNING_HINT}\n\n#{format_response(http_holder[:response])}"
           else
-            text = "HTTP #{method} #{url}\n\nUnexpected state: request completed without response."
+            text = "HTTP #{method} #{url}\n\nUnexpected state: request completed without response.\n\n#{RUNNING_HINT}"
           end
           MCP::Tool::Response.new([{ type: "text", text: text }])
         end

@@ -28,6 +28,7 @@ module GirbMcp
       class << self
         def call(target:, session_id: nil, server_context:)
           client = server_context[:session_manager].client(session_id)
+          client.auto_repause!
 
           if target.include?("#") || target.include?(".")
             get_method_source(client, target)

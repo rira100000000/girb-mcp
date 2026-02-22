@@ -29,6 +29,7 @@ module GirbMcp
       class << self
         def call(code:, session_id: nil, server_context:)
           client = server_context[:session_manager].client(session_id)
+          client.auto_repause!
 
           # In trap context (e.g., after SIGURG-based repause), `require` and
           # Mutex operations hang. Use a simplified evaluation path that avoids

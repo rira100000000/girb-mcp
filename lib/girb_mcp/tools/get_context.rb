@@ -35,6 +35,7 @@ module GirbMcp
       class << self
         def call(session_id: nil, server_context:)
           client = server_context[:session_manager].client(session_id)
+          client.auto_repause!
 
           parts = []
           total_truncated = 0
