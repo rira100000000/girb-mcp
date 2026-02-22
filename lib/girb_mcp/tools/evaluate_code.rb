@@ -9,7 +9,8 @@ module GirbMcp
       description "[Investigation] Execute Ruby code in the live context of the paused process. " \
                   "The code runs in the current binding — you can access local variables, " \
                   "call methods, inspect return values, or test fixes. " \
-                  "stdout output (from puts, print, etc.) is automatically captured and returned. " \
+                  "stdout output (from puts, print, etc.) is automatically captured and returned " \
+                  "(suppressed when it duplicates the return value). " \
                   "Example: evaluate_code(code: \"user.errors.full_messages\")"
 
       input_schema(

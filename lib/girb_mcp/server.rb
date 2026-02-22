@@ -102,7 +102,10 @@ module GirbMcp
       DB connection pools, autoloading) fail with ThreadError. \
       Simple expressions (variables, constants, p/pp) still work in trap context. \
       The 'connect' tool automatically detects and tries to escape this. \
-      If escape fails (common when the process is blocked on IO like IO.select): \
+      Additionally, after 'continue_execution', investigation tools (evaluate_code, \
+      get_context, etc.) automatically re-pause and re-escape trap context — \
+      you do not need to manually set breakpoints again to escape. \
+      If auto-escape fails (common when the process is blocked on IO like IO.select): \
       1. set_breakpoint on a line in your controller/action \
       2. trigger_request to send an HTTP request — this auto-resumes the process \
       3. Once stopped at the breakpoint, all operations work normally \
