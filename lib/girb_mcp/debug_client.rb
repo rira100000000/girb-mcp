@@ -70,6 +70,18 @@ module GirbMcp
     rescue Errno::ENOENT => e
       raise ConnectionError, "Socket not found: #{e.message}. " \
                              "The debug process may have exited. Use 'list_debug_sessions' to check."
+    rescue TimeoutError
+      disconnect
+      raise ConnectionError, "Connection timed out: the debug process did not respond.\n" \
+                             "Possible causes:\n" \
+                             "  - Another debugger client is already connected " \
+                             "(only one client allowed at a time)\n" \
+                             "  - The target process is blocked and cannot respond " \
+                             "to the debug interrupt\n" \
+                             "To resolve:\n" \
+                             "  - Close other debugger clients " \
+                             "(e.g., IDE debugger, other terminal sessions)\n" \
+                             "  - Restart the target process with 'rdbg --open'"
     rescue GirbMcp::Error
       raise
     rescue StandardError => e
@@ -430,7 +442,10 @@ module GirbMcp
       nil
     end
 
-    # List available debug sessions
+    # List available debug sessions.
+    # Filters by: socket file exists, PID alive, and socket is connectable.
+    # The connectable check catches stale sockets where the PID was reused
+    # by a different process that doesn't listen on the debug socket.
     def self.list_sessions
       dir = socket_dir
       return [] unless dir && Dir.exist?(dir)
@@ -439,7 +454,7 @@ module GirbMcp
         File.socket?(path)
       end.filter_map do |path|
         pid = extract_pid(path)
-        next unless pid && process_alive?(pid)
+        next unless pid && process_alive?(pid) && socket_connectable?(path)
 
         { path: path, pid: pid, name: extract_session_name(path) }
       end
@@ -857,6 +872,20 @@ module GirbMcp
       Process.kill(0, pid)
       true
     rescue Errno::ESRCH, Errno::EPERM
+      false
+    end
+
+    # Quick liveness probe: verify the Unix socket is actually accepting
+    # connections. Filters out stale socket files where the PID was reused
+    # by a different process that doesn't listen on the debug socket.
+    # Does NOT send any protocol data — just connects and immediately closes.
+    def self.socket_connectable?(path)
+      sock = Socket.unix(path)
+      sock.close
+      true
+    rescue Errno::ECONNREFUSED, Errno::ENOENT, Errno::EACCES, IOError
+      false
+    rescue StandardError
       false
     end
   end

@@ -114,6 +114,33 @@ RSpec.describe GirbMcp::DebugClient do
     end
   end
 
+  describe ".socket_connectable?" do
+    it "returns true when socket accepts connections" do
+      # Create a real Unix server socket
+      Dir.mktmpdir do |dir|
+        path = File.join(dir, "test.sock")
+        server = UNIXServer.new(path)
+        expect(GirbMcp::DebugClient.socket_connectable?(path)).to be true
+      ensure
+        server&.close
+      end
+    end
+
+    it "returns false when socket file does not exist" do
+      expect(GirbMcp::DebugClient.socket_connectable?("/tmp/nonexistent_socket")).to be false
+    end
+
+    it "returns false when socket is not listening" do
+      Dir.mktmpdir do |dir|
+        path = File.join(dir, "stale.sock")
+        # Create a socket file but don't listen on it
+        server = UNIXServer.new(path)
+        server.close
+        expect(GirbMcp::DebugClient.socket_connectable?(path)).to be false
+      end
+    end
+  end
+
   describe "#disconnect" do
     it "resets state" do
       client = GirbMcp::DebugClient.new
@@ -286,7 +313,7 @@ RSpec.describe GirbMcp::DebugClient do
       server_sock&.close rescue nil
     end
 
-    it "raises TimeoutError without block when initial read times out" do
+    it "raises ConnectionError with diagnostic message when initial read times out" do
       client_sock, server_sock = Socket.pair(:UNIX, :STREAM, 0)
       client = GirbMcp::DebugClient.new
 
@@ -294,16 +321,16 @@ RSpec.describe GirbMcp::DebugClient do
       allow(Socket).to receive(:unix).and_return(client_sock)
       allow(client).to receive(:send_greeting)
 
-      # No block given, no data sent — should timeout and raise
+      # No block given, no data sent — should timeout and raise ConnectionError
       expect {
         client.connect(connect_timeout: 0.5)
-      }.to raise_error(GirbMcp::TimeoutError)
+      }.to raise_error(GirbMcp::ConnectionError, /Another debugger client/)
     ensure
       client_sock&.close rescue nil
       server_sock&.close rescue nil
     end
 
-    it "raises TimeoutError when retry also times out" do
+    it "raises ConnectionError with diagnostic message when retry also times out" do
       client_sock, server_sock = Socket.pair(:UNIX, :STREAM, 0)
       client = GirbMcp::DebugClient.new
 
@@ -319,7 +346,7 @@ RSpec.describe GirbMcp::DebugClient do
           callback_called = true
           # Don't send any data — retry should also timeout
         }
-      }.to raise_error(GirbMcp::TimeoutError)
+      }.to raise_error(GirbMcp::ConnectionError, /Another debugger client/)
 
       expect(callback_called).to be true
     ensure
