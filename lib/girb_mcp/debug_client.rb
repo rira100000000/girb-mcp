@@ -76,6 +76,8 @@ module GirbMcp
                              "Possible causes:\n" \
                              "  - Another debugger client is already connected " \
                              "(only one client allowed at a time)\n" \
+                             "  - A previous debugger client disconnected uncleanly, " \
+                             "leaving the session stuck\n" \
                              "  - The target process is blocked and cannot respond " \
                              "to the debug interrupt\n" \
                              "To resolve:\n" \
