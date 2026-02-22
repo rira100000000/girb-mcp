@@ -31,6 +31,8 @@ def build_mock_client(connected: true, pid: "12345", paused: true, trap_context:
     script_file: nil,
     script_args: nil,
     pending_http: nil,
+    listen_ports: [],
+    escape_target: nil,
   )
   allow(client).to receive(:send_command).and_return("")
   allow(client).to receive(:send_command_no_wait)
@@ -50,6 +52,8 @@ def build_mock_client(connected: true, pid: "12345", paused: true, trap_context:
   allow(client).to receive(:continue_and_wait).and_return({ type: :timeout, output: "" })
   allow(client).to receive(:wait_for_breakpoint).and_return({ type: :timeout, output: "" })
   allow(client).to receive(:pending_http=)
+  allow(client).to receive(:listen_ports=)
+  allow(client).to receive(:escape_target=)
   client
 end
 

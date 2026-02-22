@@ -3,6 +3,8 @@
 require "socket"
 require "io/wait"
 require "set"
+require "net/http"
+require "uri"
 
 module GirbMcp
   class DebugClient
@@ -15,7 +17,8 @@ module GirbMcp
     ANSI_ESCAPE = /\e\[[0-9;]*m/
 
     attr_reader :pid, :connected, :paused, :trap_context
-    attr_accessor :stderr_file, :stdout_file, :wait_thread, :script_file, :script_args, :pending_http
+    attr_accessor :stderr_file, :stdout_file, :wait_thread, :script_file, :script_args, :pending_http,
+      :listen_ports, :escape_target
 
     def initialize
       @socket = nil
@@ -26,6 +29,8 @@ module GirbMcp
       @width = DEFAULT_WIDTH
       @mutex = Mutex.new
       @one_shot_breakpoints = Set.new
+      @listen_ports = []
+      @escape_target = nil
     end
 
     def connected?
@@ -99,6 +104,8 @@ module GirbMcp
       @paused = false
       @trap_context = nil
       @pending_http = nil
+      @listen_ports = []
+      @escape_target = nil
       cleanup_captured_files
     end
 
@@ -333,6 +340,13 @@ module GirbMcp
                             "Set a breakpoint and use 'trigger_request' to pause at a specific point, " \
                             "or 'disconnect' and 'connect' to re-attach."
       end
+
+      # After repause via SIGURG, the process is in trap context.
+      # Auto-escape if we have cached escape target and listen ports.
+      if @trap_context && @listen_ports&.any? && @escape_target
+        attempt_trap_escape!
+      end
+
       true
     end
 
@@ -479,6 +493,59 @@ module GirbMcp
     end
 
     private
+
+    # Attempt to escape trap context after repause by setting a breakpoint
+    # on the cached escape target (typically ActionController::Metal#dispatch)
+    # and sending an HTTP GET to trigger it.
+    # On success, sets @trap_context = false.
+    # On failure, tries to re-pause and leaves @trap_context = true (same as before).
+    def attempt_trap_escape!
+      file = @escape_target[:file]
+      line = @escape_target[:line]
+      path = @escape_target[:path] || "/"
+      port = @listen_ports.first
+
+      # Set a temporary breakpoint
+      bp_output = send_command("break #{file}:#{line}")
+      bp_match = bp_output.match(/#(\d+)/)
+      return unless bp_match
+
+      bp_number = bp_match[1].to_i
+
+      # Send GET request in background thread and wait for breakpoint
+      url = "http://127.0.0.1:#{port}#{path}"
+      http_done = false
+      http_thread = Thread.new do
+        uri = URI.parse(url)
+        http = Net::HTTP.new(uri.host, uri.port)
+        http.open_timeout = 5
+        http.read_timeout = 10
+        http.get(uri.request_uri)
+      rescue StandardError
+        # Ignore HTTP errors — we only care about triggering the breakpoint
+      ensure
+        http_done = true
+      end
+
+      result = continue_and_wait(timeout: 10) { http_done }
+      http_thread.join(1)
+
+      if result[:type] == :breakpoint
+        @trap_context = false
+      else
+        # Escape failed — try to re-pause so subsequent commands work
+        ensure_paused(timeout: 3)
+      end
+
+      # Clean up the temporary breakpoint (best-effort)
+      begin
+        send_command("delete #{bp_number}")
+      rescue GirbMcp::Error
+        # Best-effort cleanup
+      end
+    rescue GirbMcp::Error
+      # Failed to escape — stay in trap context (same behavior as before)
+    end
 
     def force_close_socket
       return unless @socket && !@socket.closed?

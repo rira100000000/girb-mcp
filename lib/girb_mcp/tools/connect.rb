@@ -113,6 +113,13 @@ module GirbMcp
             route_info: route_info,
             auto_escape: auto_escape_enabled)
 
+          # Cache escape info for auto_repause! (re-escape after continue_execution)
+          client.listen_ports = listen_ports
+          if is_rails && listen_ports.any?
+            url_path = extract_get_path(route_info)
+            client.escape_target = find_target_from_framework(client, url_path)
+          end
+
           # Install double Ctrl+C force-quit handler on the target process
           install_sigint_handler(client)
 

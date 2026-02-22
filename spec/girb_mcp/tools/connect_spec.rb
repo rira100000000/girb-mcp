@@ -688,6 +688,108 @@ RSpec.describe GirbMcp::Tools::Connect do
       end
     end
 
+    context "escape info caching for auto_repause" do
+      it "caches listen_ports and escape_target for Rails apps with ports" do
+        # Set up as Rails app
+        allow(client).to receive(:send_command)
+          .with("p defined?(Rails)")
+          .and_return('=> "constant"')
+
+        # Set up port detection (port 3000)
+        allow(Dir).to receive(:exist?).and_call_original
+        allow(Dir).to receive(:exist?).with("/proc/12345/fd").and_return(true)
+        allow(Dir).to receive(:foreach).and_call_original
+        allow(Dir).to receive(:foreach).with("/proc/12345/fd").and_yield("5")
+        allow(File).to receive(:readlink).and_call_original
+        allow(File).to receive(:readlink).with("/proc/12345/fd/5").and_return("socket:[99999]")
+        allow(File).to receive(:exist?).and_call_original
+        allow(File).to receive(:exist?).with("/proc/12345/net/tcp").and_return(true)
+        allow(File).to receive(:exist?).with("/proc/12345/net/tcp6").and_return(false)
+        tcp_content = <<~TCP
+          sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
+           0: 00000000:0BB8 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 99999
+        TCP
+        allow(File).to receive(:readlines).with("/proc/12345/net/tcp").and_return(tcp_content.lines)
+
+        # Framework fallback (Metal#dispatch)
+        allow(client).to receive(:send_command)
+          .with(/ActionController::Metal\.instance_method.*dispatch.*source_location/)
+          .and_return('=> ["/gems/actionpack/lib/action_controller/metal.rb", 210]')
+
+        described_class.call(server_context: server_context)
+
+        expect(client).to have_received(:listen_ports=).with([3000])
+        expect(client).to have_received(:escape_target=).with(
+          { file: "/gems/actionpack/lib/action_controller/metal.rb", line: 211, path: "/" }
+        )
+      end
+
+      it "caches escape_target with GET path from routes" do
+        # Set up as Rails app
+        allow(client).to receive(:send_command)
+          .with("p defined?(Rails)")
+          .and_return('=> "constant"')
+
+        # Set up port detection
+        allow(Dir).to receive(:exist?).and_call_original
+        allow(Dir).to receive(:exist?).with("/proc/12345/fd").and_return(true)
+        allow(Dir).to receive(:foreach).and_call_original
+        allow(Dir).to receive(:foreach).with("/proc/12345/fd").and_yield("5")
+        allow(File).to receive(:readlink).and_call_original
+        allow(File).to receive(:readlink).with("/proc/12345/fd/5").and_return("socket:[99999]")
+        allow(File).to receive(:exist?).and_call_original
+        allow(File).to receive(:exist?).with("/proc/12345/net/tcp").and_return(true)
+        allow(File).to receive(:exist?).with("/proc/12345/net/tcp6").and_return(false)
+        tcp_content = <<~TCP
+          sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
+           0: 00000000:0BB8 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 99999
+        TCP
+        allow(File).to receive(:readlines).with("/proc/12345/net/tcp").and_return(tcp_content.lines)
+
+        # Route info with GET path
+        allow(client).to receive(:send_command)
+          .with(/routes\.count/)
+          .and_return("=> 5")
+        allow(client).to receive(:send_command)
+          .with(/routes\.select.*first/)
+          .and_return('=> "GET     /users users#index"')
+
+        # Framework fallback
+        allow(client).to receive(:send_command)
+          .with(/ActionController::Metal\.instance_method.*dispatch.*source_location/)
+          .and_return('=> ["/gems/actionpack/lib/action_controller/metal.rb", 210]')
+
+        described_class.call(server_context: server_context)
+
+        expect(client).to have_received(:escape_target=).with(
+          { file: "/gems/actionpack/lib/action_controller/metal.rb", line: 211, path: "/users" }
+        )
+      end
+
+      it "does not set escape_target for non-Rails processes" do
+        allow(client).to receive(:send_command)
+          .with("p defined?(Rails)")
+          .and_return("=> nil")
+
+        described_class.call(server_context: server_context)
+
+        expect(client).to have_received(:listen_ports=).with([])
+        expect(client).not_to have_received(:escape_target=)
+      end
+
+      it "does not set escape_target when no listen ports" do
+        # Set up as Rails app but no ports
+        allow(client).to receive(:send_command)
+          .with("p defined?(Rails)")
+          .and_return('=> "constant"')
+
+        described_class.call(server_context: server_context)
+
+        expect(client).to have_received(:listen_ports=).with([])
+        expect(client).not_to have_received(:escape_target=)
+      end
+    end
+
     context "SIGINT force-quit handler" do
       it "installs SIGINT handler on connect" do
         allow(client).to receive(:send_command)

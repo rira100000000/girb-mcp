@@ -455,4 +455,158 @@ RSpec.describe GirbMcp::DebugClient do
       server.close rescue nil
     end
   end
+
+  describe "#auto_repause!" do
+    it "returns false when already paused" do
+      client = GirbMcp::DebugClient.new
+      client.instance_variable_set(:@paused, true)
+      expect(client.auto_repause!).to be false
+    end
+
+    it "raises SessionError when repause fails" do
+      client = GirbMcp::DebugClient.new
+      client.instance_variable_set(:@connected, true)
+      client.instance_variable_set(:@paused, false)
+      # No socket → repause returns nil
+      expect { client.auto_repause! }.to raise_error(
+        GirbMcp::SessionError, /not paused/
+      )
+    end
+
+    it "does not attempt escape when escape_target is nil" do
+      client, server = setup_client_with_socket
+      client.instance_variable_set(:@paused, false)
+      client.listen_ports = [3000]
+      client.escape_target = nil
+
+      # server.gets blocks until "pause\n" arrives — no sleep needed
+      Thread.new do
+        server.gets # reads "pause\n"
+        server.write("input 12345\n")
+      end
+
+      result = client.auto_repause!
+      expect(result).to be true
+      expect(client.trap_context).to be true
+    ensure
+      server.close rescue nil
+    end
+
+    it "does not attempt escape when listen_ports is empty" do
+      client, server = setup_client_with_socket
+      client.instance_variable_set(:@paused, false)
+      client.listen_ports = []
+      client.escape_target = { file: "/gems/metal.rb", line: 211, path: "/" }
+
+      Thread.new do
+        server.gets # reads "pause\n"
+        server.write("input 12345\n")
+      end
+
+      result = client.auto_repause!
+      expect(result).to be true
+      expect(client.trap_context).to be true
+    ensure
+      server.close rescue nil
+    end
+
+    it "attempts escape after repause when escape_target and listen_ports are set" do
+      client, server = setup_client_with_socket
+      client.instance_variable_set(:@paused, false)
+      client.listen_ports = [3000]
+      client.escape_target = { file: "/gems/metal.rb", line: 211, path: "/users" }
+
+      # Use Queue to synchronize: HTTP stub blocks until BP response is written,
+      # ensuring continue_and_wait reads the breakpoint before interrupt fires.
+      bp_written = Queue.new
+
+      http_double = instance_double(Net::HTTP)
+      allow(Net::HTTP).to receive(:new).and_return(http_double)
+      allow(http_double).to receive(:open_timeout=)
+      allow(http_double).to receive(:read_timeout=)
+      allow(http_double).to receive(:get) { bp_written.pop; Net::HTTPResponse }
+
+      Thread.new do
+        server.gets # "pause\n"
+        server.write("input 12345\n")
+
+        server.gets # "command ... break ..."
+        server.write("out #1  BP - Line  /gems/metal.rb:211\n")
+        server.write("input 12345\n")
+
+        server.gets # "command ... c\n"
+        server.write("out Stop by #1  BP - Line  /gems/metal.rb:211\n")
+        server.write("input 12345\n")
+        bp_written.push(true) # unblock HTTP stub after BP response is written
+
+        server.gets # "command ... delete 1\n"
+        server.write("out \n")
+        server.write("input 12345\n")
+      end
+
+      result = client.auto_repause!
+      expect(result).to be true
+      expect(client.trap_context).to be false
+    ensure
+      server.close rescue nil
+    end
+
+    it "stays in trap context when escape times out" do
+      client, server = setup_client_with_socket
+      client.instance_variable_set(:@paused, false)
+      client.listen_ports = [3000]
+      client.escape_target = { file: "/gems/metal.rb", line: 211, path: "/" }
+
+      # HTTP completes instantly → interrupt fires → :interrupted → escape fails
+      http_double = instance_double(Net::HTTP)
+      allow(Net::HTTP).to receive(:new).and_return(http_double)
+      allow(http_double).to receive(:open_timeout=)
+      allow(http_double).to receive(:read_timeout=)
+      allow(http_double).to receive(:get).and_return(Net::HTTPResponse)
+
+      server_thread = Thread.new do
+        Thread.current.report_on_exception = false
+        server.gets # "pause\n"
+        server.write("input 12345\n")
+
+        server.gets # "command ... break ..."
+        server.write("out #1  BP - Line  /gems/metal.rb:211\n")
+        server.write("input 12345\n")
+
+        server.gets # "command ... c\n"
+        # Don't respond — escape fails, ensure_paused times out,
+        # send_command("delete ...") raises SessionError (not paused) → caught
+      rescue IOError
+        # Server socket may be closed by ensure block
+      end
+
+      result = client.auto_repause!
+      expect(result).to be true
+      expect(client.trap_context).to be true
+    ensure
+      server.close rescue nil
+      server_thread&.join(2)
+    end
+  end
+
+  describe "#listen_ports and #escape_target" do
+    it "initializes listen_ports as empty array" do
+      client = GirbMcp::DebugClient.new
+      expect(client.listen_ports).to eq([])
+    end
+
+    it "initializes escape_target as nil" do
+      client = GirbMcp::DebugClient.new
+      expect(client.escape_target).to be_nil
+    end
+
+    it "resets on disconnect" do
+      client = GirbMcp::DebugClient.new
+      client.listen_ports = [3000]
+      client.escape_target = { file: "test.rb", line: 1, path: "/" }
+      client.disconnect
+      expect(client.listen_ports).to eq([])
+      expect(client.escape_target).to be_nil
+    end
+  end
 end
