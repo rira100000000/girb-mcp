@@ -69,6 +69,94 @@ RSpec.describe GirbMcp::SessionManager do
     end
   end
 
+  describe "#connect (reconnect cleanup)" do
+    it "cleans up old session with the same sid on reconnect" do
+      old_client = build_mock_client(pid: "100")
+      sessions = manager.instance_variable_get(:@sessions)
+      sessions["session_100"] = GirbMcp::SessionManager::SessionInfo.new(
+        client: old_client, connected_at: Time.now, last_activity_at: Time.now,
+      )
+
+      new_client = build_mock_client(pid: "100")
+      allow(GirbMcp::DebugClient).to receive(:new).and_return(new_client)
+      allow(new_client).to receive(:connect).and_return({ success: true, pid: "100", output: "ok" })
+
+      manager.connect
+
+      expect(old_client).to have_received(:disconnect)
+      expect(sessions).to have_key("session_100")
+      expect(sessions["session_100"].client).to eq(new_client)
+    end
+
+    it "cleans up old session with same PID but different sid" do
+      old_client = build_mock_client(pid: "200")
+      sessions = manager.instance_variable_get(:@sessions)
+      sessions["custom_sid"] = GirbMcp::SessionManager::SessionInfo.new(
+        client: old_client, connected_at: Time.now, last_activity_at: Time.now,
+      )
+
+      new_client = build_mock_client(pid: "200")
+      allow(GirbMcp::DebugClient).to receive(:new).and_return(new_client)
+      allow(new_client).to receive(:connect).and_return({ success: true, pid: "200", output: "ok" })
+
+      manager.connect
+
+      expect(old_client).to have_received(:disconnect)
+      expect(sessions).not_to have_key("custom_sid")
+      expect(sessions).to have_key("session_200")
+    end
+
+    it "does not clean up sessions with different PIDs" do
+      other_client = build_mock_client(pid: "300")
+      sessions = manager.instance_variable_get(:@sessions)
+      sessions["session_300"] = GirbMcp::SessionManager::SessionInfo.new(
+        client: other_client, connected_at: Time.now, last_activity_at: Time.now,
+      )
+
+      new_client = build_mock_client(pid: "400")
+      allow(GirbMcp::DebugClient).to receive(:new).and_return(new_client)
+      allow(new_client).to receive(:connect).and_return({ success: true, pid: "400", output: "ok" })
+
+      manager.connect
+
+      expect(other_client).not_to have_received(:disconnect)
+      expect(sessions).to have_key("session_300")
+      expect(sessions).to have_key("session_400")
+    end
+  end
+
+  describe "#connect (block passthrough)" do
+    it "passes block to DebugClient#connect as on_initial_timeout" do
+      new_client = build_mock_client(pid: "500")
+      allow(GirbMcp::DebugClient).to receive(:new).and_return(new_client)
+
+      block_received = false
+      allow(new_client).to receive(:connect) do |**_kwargs, &block|
+        block_received = !block.nil?
+        { success: true, pid: "500", output: "ok" }
+      end
+
+      manager.connect { "wake!" }
+
+      expect(block_received).to be true
+    end
+
+    it "passes connect_timeout to DebugClient#connect" do
+      new_client = build_mock_client(pid: "501")
+      allow(GirbMcp::DebugClient).to receive(:new).and_return(new_client)
+
+      received_timeout = nil
+      allow(new_client).to receive(:connect) do |**kwargs, &_block|
+        received_timeout = kwargs[:connect_timeout]
+        { success: true, pid: "501", output: "ok" }
+      end
+
+      manager.connect(connect_timeout: 5)
+
+      expect(received_timeout).to eq(5)
+    end
+  end
+
   describe "#disconnect" do
     it "does nothing when no sessions" do
       expect { manager.disconnect }.not_to raise_error
@@ -285,9 +373,9 @@ RSpec.describe GirbMcp::SessionManager do
       client = build_mock_client
       bp_output = "#0  BP - Line  app/models/user.rb:10\n" \
                   "#2  BP - Line  app/models/user.rb:30\n"
-      allow(client).to receive(:send_command).with("info breakpoints", timeout: 3).and_return(bp_output)
-      allow(client).to receive(:send_command).with("delete 0", timeout: 3).and_return("")
-      allow(client).to receive(:send_command).with("delete 2", timeout: 3).and_return("")
+      allow(client).to receive(:send_command).with("info breakpoints", timeout: anything).and_return(bp_output)
+      allow(client).to receive(:send_command).with("delete 0", timeout: anything).and_return("")
+      allow(client).to receive(:send_command).with("delete 2", timeout: anything).and_return("")
 
       info = GirbMcp::SessionManager::SessionInfo.new(
         client: client, connected_at: Time.now, last_activity_at: Time.now,
@@ -295,9 +383,9 @@ RSpec.describe GirbMcp::SessionManager do
 
       manager.send(:resume_before_disconnect, info)
 
-      expect(client).to have_received(:send_command).with("info breakpoints", timeout: 3)
-      expect(client).to have_received(:send_command).with("delete 0", timeout: 3)
-      expect(client).to have_received(:send_command).with("delete 2", timeout: 3)
+      expect(client).to have_received(:send_command).with("info breakpoints", timeout: anything)
+      expect(client).to have_received(:send_command).with("delete 0", timeout: anything)
+      expect(client).to have_received(:send_command).with("delete 2", timeout: anything)
       expect(client).to have_received(:send_command_no_wait).with("c")
     end
 
@@ -316,9 +404,22 @@ RSpec.describe GirbMcp::SessionManager do
       expect(client).not_to have_received(:send_command_no_wait)
     end
 
+    it "skips when client is not paused" do
+      client = build_mock_client(paused: false)
+
+      info = GirbMcp::SessionManager::SessionInfo.new(
+        client: client, connected_at: Time.now, last_activity_at: Time.now,
+      )
+
+      manager.send(:resume_before_disconnect, info)
+
+      expect(client).not_to have_received(:send_command)
+      expect(client).not_to have_received(:send_command_no_wait)
+    end
+
     it "continues even when BP info fails" do
       client = build_mock_client
-      allow(client).to receive(:send_command).with("info breakpoints", timeout: 3).and_raise(
+      allow(client).to receive(:send_command).with("info breakpoints", timeout: anything).and_raise(
         GirbMcp::TimeoutError, "timeout"
       )
 

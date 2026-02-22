@@ -24,15 +24,33 @@ module GirbMcp
       start_reaper
     end
 
-    # Connect to a debug session and register it
-    def connect(session_id: nil, path: nil, host: nil, port: nil)
+    # Connect to a debug session and register it.
+    # Cleans up existing sessions with the same sid or same PID to prevent
+    # socket leaks when reconnecting to the same process.
+    # Accepts an optional block that is passed through to DebugClient#connect
+    # as the on_initial_timeout callback (used to wake IO-blocked processes).
+    def connect(session_id: nil, path: nil, host: nil, port: nil, connect_timeout: nil, &on_initial_timeout)
       client = DebugClient.new
-      result = client.connect(path: path, host: host, port: port)
+      result = client.connect(path: path, host: host, port: port,
+                              connect_timeout: connect_timeout, &on_initial_timeout)
 
       now = Time.now
       sid = session_id || "session_#{client.pid}"
 
       @mutex.synchronize do
+        # Clean up existing session with the same sid (socket leak prevention)
+        old_info = @sessions.delete(sid)
+        old_info&.client&.disconnect rescue nil
+
+        # Clean up sessions connected to the same PID but with a different sid
+        same_pid_sids = @sessions.each_with_object([]) do |(existing_sid, info), acc|
+          acc << existing_sid if info.client.pid.to_s == client.pid.to_s
+        end
+        same_pid_sids.each do |existing_sid|
+          info = @sessions.delete(existing_sid)
+          info&.client&.disconnect rescue nil
+        end
+
         @sessions[sid] = SessionInfo.new(
           client: client,
           connected_at: now,
@@ -286,35 +304,49 @@ module GirbMcp
       end
     end
 
+    RESUME_DEADLINE = 5
+
     # Delete all breakpoints and send continue before disconnecting so the
-    # target process resumes cleanly. Uses send_command (reaper runs in a
-    # normal thread context where blocking is acceptable).
+    # target process resumes cleanly. Bounded by a hard deadline to prevent
+    # the reaper thread from blocking indefinitely.
     def resume_before_disconnect(info)
       return unless info.client.connected?
       return if info.client.wait_thread # run_script sessions don't need resume
+      return unless info.client.paused  # Can't send commands to a running process
+
+      deadline = Time.now + RESUME_DEADLINE
 
       # Restore original SIGINT handler
-      begin
-        info.client.send_command(
-          "p $_girb_orig_int ? (trap('INT',$_girb_orig_int);$_girb_orig_int=nil;:ok) : nil",
-          timeout: 3,
-        )
-      rescue GirbMcp::Error
-        # Best-effort
+      remaining = deadline - Time.now
+      if remaining > 0
+        begin
+          info.client.send_command(
+            "p $_girb_orig_int ? (trap('INT',$_girb_orig_int);$_girb_orig_int=nil;:ok) : nil",
+            timeout: [remaining, 2].min,
+          )
+        rescue GirbMcp::Error
+          # Best-effort
+        end
       end
 
       # Delete all breakpoints so the process doesn't immediately pause again
-      begin
-        bp_output = info.client.send_command("info breakpoints", timeout: 3)
-        unless bp_output.strip.empty?
-          bp_output.each_line do |line|
-            if (match = line.match(/#(\d+)/))
-              info.client.send_command("delete #{match[1]}", timeout: 3) rescue nil
+      remaining = deadline - Time.now
+      if remaining > 0
+        begin
+          bp_output = info.client.send_command("info breakpoints", timeout: [remaining, 2].min)
+          unless bp_output.strip.empty?
+            bp_output.each_line do |line|
+              remaining = deadline - Time.now
+              break if remaining <= 0
+
+              if (match = line.match(/#(\d+)/))
+                info.client.send_command("delete #{match[1]}", timeout: [remaining, 2].min) rescue nil
+              end
             end
           end
+        rescue GirbMcp::Error
+          # Best-effort
         end
-      rescue GirbMcp::Error
-        # Best-effort
       end
 
       info.client.send_command_no_wait("c")

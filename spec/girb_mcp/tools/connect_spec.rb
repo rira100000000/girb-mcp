@@ -6,6 +6,11 @@ RSpec.describe GirbMcp::Tools::Connect do
   let(:server_context) { { session_manager: manager } }
 
   describe ".call" do
+    before do
+      # Prevent pre-connect PID detection from finding real debug sessions
+      allow(GirbMcp::DebugClient).to receive(:list_sessions).and_return([])
+    end
+
     it "connects and returns session info" do
       response = described_class.call(server_context: server_context)
       text = response_text(response)
@@ -25,12 +30,15 @@ RSpec.describe GirbMcp::Tools::Connect do
     end
 
     it "passes connection parameters" do
-      expect(manager).to receive(:connect).with(
-        session_id: "my_session",
-        path: "/tmp/sock",
-        host: nil,
-        port: nil,
-      ).and_return({ success: true, pid: "111", output: "ok", session_id: "my_session" })
+      expect(manager).to receive(:connect) do |**kwargs, &_block|
+        expect(kwargs).to include(
+          session_id: "my_session",
+          path: "/tmp/sock",
+          host: nil,
+          port: nil,
+        )
+        { success: true, pid: "111", output: "ok", session_id: "my_session" }
+      end
 
       described_class.call(
         path: "/tmp/sock",
@@ -74,6 +82,132 @@ RSpec.describe GirbMcp::Tools::Connect do
       response = described_class.call(server_context: server_context)
       text = response_text(response)
       expect(text).to include("stdout/stderr are not captured")
+    end
+
+    context "IO-blocked process wake" do
+      it "resolves PID from socket path and detects listen ports pre-connect" do
+        # Simulate a socket path with PID 54321
+        allow(GirbMcp::DebugClient).to receive(:extract_pid)
+          .with("/tmp/rdbg-1000/rdbg-54321")
+          .and_return(54321)
+
+        # Set up port detection for PID 54321 (port 3000)
+        allow(Dir).to receive(:exist?).and_call_original
+        allow(Dir).to receive(:exist?).with("/proc/54321/fd").and_return(true)
+        allow(Dir).to receive(:foreach).and_call_original
+        allow(Dir).to receive(:foreach).with("/proc/54321/fd").and_yield("5")
+        allow(File).to receive(:readlink).and_call_original
+        allow(File).to receive(:readlink).with("/proc/54321/fd/5").and_return("socket:[88888]")
+        allow(File).to receive(:exist?).and_call_original
+        allow(File).to receive(:exist?).with("/proc/54321/net/tcp").and_return(true)
+        allow(File).to receive(:exist?).with("/proc/54321/net/tcp6").and_return(false)
+        tcp_content = <<~TCP
+          sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
+           0: 00000000:0BB8 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 88888
+        TCP
+        allow(File).to receive(:readlines).with("/proc/54321/net/tcp").and_return(tcp_content.lines)
+
+        # manager.connect should receive connect_timeout: 5 and a block
+        received_timeout = nil
+        received_block = false
+        allow(manager).to receive(:connect) do |**kwargs, &block|
+          received_timeout = kwargs[:connect_timeout]
+          received_block = !block.nil?
+          { success: true, pid: "54321", output: "ok", session_id: "session_54321" }
+        end
+        allow(manager).to receive(:client).and_return(client)
+
+        # Also stub detect_listen_ports for post-connect (uses PID "54321" as string)
+        allow(Dir).to receive(:exist?).with("/proc/54321/fd").and_return(true)
+        allow(Dir).to receive(:foreach).with("/proc/54321/fd").and_yield("5")
+        allow(File).to receive(:readlink).with("/proc/54321/fd/5").and_return("socket:[88888]")
+        allow(File).to receive(:exist?).with("/proc/54321/net/tcp").and_return(true)
+        allow(File).to receive(:exist?).with("/proc/54321/net/tcp6").and_return(false)
+        allow(File).to receive(:readlines).with("/proc/54321/net/tcp").and_return(tcp_content.lines)
+
+        described_class.call(path: "/tmp/rdbg-1000/rdbg-54321", server_context: server_context)
+
+        expect(received_timeout).to eq(5)
+        expect(received_block).to be true
+      end
+
+      it "resolves PID from auto-discovered single session" do
+        allow(GirbMcp::DebugClient).to receive(:list_sessions).and_return([
+          { path: "/tmp/rdbg-1000/rdbg-77777", pid: 77777, name: "test" },
+        ])
+
+        # No listen ports for this PID (no /proc available)
+        allow(Dir).to receive(:exist?).and_call_original
+        allow(Dir).to receive(:exist?).with("/proc/77777/fd").and_return(false)
+
+        # connect_timeout should be nil (no listen ports detected)
+        received_timeout = nil
+        allow(manager).to receive(:connect) do |**kwargs, &_block|
+          received_timeout = kwargs[:connect_timeout]
+          { success: true, pid: "77777", output: "ok", session_id: "session_77777" }
+        end
+        allow(manager).to receive(:client).and_return(client)
+
+        described_class.call(server_context: server_context)
+
+        expect(received_timeout).to be_nil
+      end
+
+      it "returns nil PID for TCP port connections" do
+        # TCP port connection — can't resolve PID pre-connect
+        received_timeout = nil
+        allow(manager).to receive(:connect) do |**kwargs, &_block|
+          received_timeout = kwargs[:connect_timeout]
+          { success: true, pid: "12345", output: "ok", session_id: "session_12345" }
+        end
+        allow(manager).to receive(:client).and_return(client)
+
+        described_class.call(port: 12345, server_context: server_context)
+
+        expect(received_timeout).to be_nil
+      end
+
+      it "shows woke status when wake callback was triggered" do
+        allow(GirbMcp::DebugClient).to receive(:extract_pid)
+          .with("/tmp/rdbg-1000/rdbg-54321")
+          .and_return(54321)
+
+        # Set up port detection (port 3000)
+        allow(Dir).to receive(:exist?).and_call_original
+        allow(Dir).to receive(:exist?).with("/proc/54321/fd").and_return(true)
+        allow(Dir).to receive(:foreach).and_call_original
+        allow(Dir).to receive(:foreach).with("/proc/54321/fd").and_yield("5")
+        allow(File).to receive(:readlink).and_call_original
+        allow(File).to receive(:readlink).with("/proc/54321/fd/5").and_return("socket:[88888]")
+        allow(File).to receive(:exist?).and_call_original
+        allow(File).to receive(:exist?).with("/proc/54321/net/tcp").and_return(true)
+        allow(File).to receive(:exist?).with("/proc/54321/net/tcp6").and_return(false)
+        tcp_content = <<~TCP
+          sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
+           0: 00000000:0BB8 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 88888
+        TCP
+        allow(File).to receive(:readlines).with("/proc/54321/net/tcp").and_return(tcp_content.lines)
+
+        # Simulate: manager.connect calls the block (simulating timeout+wake)
+        allow(manager).to receive(:connect) do |**_kwargs, &block|
+          block&.call
+          { success: true, pid: "54321", output: "ok", session_id: "session_54321" }
+        end
+        allow(manager).to receive(:client).and_return(client)
+
+        response = described_class.call(path: "/tmp/rdbg-1000/rdbg-54321", server_context: server_context)
+        text = response_text(response)
+
+        expect(text).to include("Woke IO-blocked process via HTTP (port 3000)")
+      end
+
+      it "does not show woke status when callback was not triggered" do
+        # No listen ports pre-connect → block not triggered
+        response = described_class.call(server_context: server_context)
+        text = response_text(response)
+
+        expect(text).not_to include("Woke IO-blocked")
+      end
     end
 
     context "when in signal trap context" do

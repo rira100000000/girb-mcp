@@ -19,6 +19,8 @@ module GirbMcp
         },
       )
 
+      CLEANUP_DEADLINE = 3
+
       class << self
         def call(session_id: nil, server_context:)
           manager = server_context[:session_manager]
@@ -43,32 +45,11 @@ module GirbMcp
               # Process already exited
             end
           else
-            # Restore original SIGINT handler before disconnecting
-            begin
-              client.send_command(
-                "p $_girb_orig_int ? (trap('INT',$_girb_orig_int);$_girb_orig_int=nil;:ok) : nil"
-              )
-            rescue GirbMcp::Error
-              # Best-effort
-            end
-
-            # For connect sessions (e.g., Rails server): delete all breakpoints
-            # then resume the process before disconnecting.
-            # Without BP deletion, the process may immediately hit a remaining
-            # breakpoint and pause again with no debugger attached.
-            begin
-              bp_output = client.send_command("info breakpoints")
-              unless bp_output.strip.empty?
-                bp_output.each_line do |line|
-                  if (match = line.match(/#(\d+)/))
-                    client.send_command("delete #{match[1]}") rescue nil
-                  end
-                end
-              end
-            rescue GirbMcp::Error
-              # Best-effort: proceed to continue even if BP deletion fails
-            end
-            client.send_command_no_wait("c")
+            # For connect sessions: best-effort cleanup (restore SIGINT,
+            # delete BPs, continue) bounded by a hard deadline.
+            # Skip entirely if process is not paused — sending commands to
+            # a running process violates the debug protocol.
+            best_effort_cleanup(client) if client.paused
           end
 
           # Disconnect the session (closes socket, cleans up temp files)
@@ -79,6 +60,47 @@ module GirbMcp
           text += "\n\nUse 'run_script' or 'connect' to start a new debug session."
 
           MCP::Tool::Response.new([{ type: "text", text: text }])
+        end
+
+        private
+
+        def best_effort_cleanup(client)
+          deadline = Time.now + CLEANUP_DEADLINE
+
+          # Restore original SIGINT handler
+          remaining = deadline - Time.now
+          if remaining > 0
+            begin
+              client.send_command(
+                "p $_girb_orig_int ? (trap('INT',$_girb_orig_int);$_girb_orig_int=nil;:ok) : nil",
+                timeout: [remaining, 2].min,
+              )
+            rescue GirbMcp::Error
+              # Best-effort
+            end
+          end
+
+          # Delete all breakpoints so process doesn't pause again
+          remaining = deadline - Time.now
+          if remaining > 0
+            begin
+              bp_output = client.send_command("info breakpoints", timeout: [remaining, 2].min)
+              unless bp_output.strip.empty?
+                bp_output.each_line do |line|
+                  remaining = deadline - Time.now
+                  break if remaining <= 0
+
+                  if (match = line.match(/#(\d+)/))
+                    client.send_command("delete #{match[1]}", timeout: [remaining, 2].min) rescue nil
+                  end
+                end
+              end
+            rescue GirbMcp::Error
+              # Best-effort
+            end
+          end
+
+          client.send_command_no_wait("c")
         end
       end
     end

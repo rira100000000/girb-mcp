@@ -58,18 +58,39 @@ module GirbMcp
           # Clear saved breakpoints unless explicitly restoring
           manager.clear_breakpoint_specs unless restore_breakpoints
 
+          # Detect target PID and listen ports BEFORE connecting.
+          # When the process is IO-blocked (e.g., Puma in IO.select), the debug
+          # gem's SIGURG sets a pending pause flag but can't interrupt IO.select
+          # (SA_RESTART). An HTTP request wakes IO.select, causing the trace point
+          # to fire and the pending pause to execute.
+          pre_target_pid = resolve_target_pid(path, port)
+          pre_listen_ports = pre_target_pid ? detect_listen_ports(pre_target_pid) : []
+
+          woke = false
+          connect_timeout = pre_listen_ports.any? ? 5 : nil
+
           result = manager.connect(
             session_id: session_id,
             path: path,
             host: host,
             port: port,
-          )
+            connect_timeout: connect_timeout,
+          ) {
+            if pre_listen_ports.any?
+              woke = true
+              wake_process_via_http(pre_listen_ports)
+            end
+          }
 
           client = manager.client(result[:session_id])
 
           text = "Connected to debug session.\n" \
                  "  Session ID: #{result[:session_id]}\n" \
                  "  PID: #{result[:pid]}\n"
+
+          if woke
+            text += "  Status: Woke IO-blocked process via HTTP (port #{pre_listen_ports.first})\n"
+          end
 
           # Detect listen ports (useful for trigger_request URL)
           listen_ports = detect_listen_ports(result[:pid])
@@ -128,6 +149,33 @@ module GirbMcp
         end
 
         private
+
+        # Resolve the target PID before connecting.
+        # Used to detect listen ports pre-connect so we can wake IO-blocked processes.
+        # Returns an integer PID or nil.
+        def resolve_target_pid(path, port)
+          if path
+            DebugClient.extract_pid(path)
+          elsif !port
+            sessions = DebugClient.list_sessions
+            sessions.first[:pid] if sessions.size == 1
+          end
+          # TCP port connections: can't determine PID pre-connect, return nil
+        end
+
+        # Send a fire-and-forget HTTP GET to wake an IO-blocked process.
+        # The request itself doesn't matter — it just needs to break IO.select
+        # so the debug gem's pending pause trace point can fire.
+        def wake_process_via_http(listen_ports)
+          port = listen_ports.first
+          Thread.new do
+            Net::HTTP.start("localhost", port, open_timeout: 3, read_timeout: 3) do |http|
+              http.get("/")
+            end
+          rescue StandardError
+            # ignore — we only care about waking the process
+          end
+        end
 
         # Detect TCP listen ports owned by the target process.
         # Cross-references /proc/PID/fd (socket inodes) with /proc/PID/net/tcp

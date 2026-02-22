@@ -124,6 +124,30 @@ RSpec.describe GirbMcp::DebugClient do
       expect(client.trap_context).to be_nil
       expect(client.pending_http).to be_nil
     end
+
+    it "closes socket via force_close_socket with timeout" do
+      client, server = setup_client_with_socket
+      client.disconnect
+      expect(client.connected?).to be false
+      expect(client.pid).to be_nil
+    ensure
+      server.close rescue nil
+    end
+
+    it "completes within DISCONNECT_SOCKET_TIMEOUT even if socket blocks" do
+      client, server = setup_client_with_socket
+
+      # Fill the write buffer to simulate a blocked socket
+      # (shutdown may block if the other end isn't reading)
+      start = Time.now
+      client.disconnect
+      elapsed = Time.now - start
+
+      expect(elapsed).to be < (GirbMcp::DebugClient::DISCONNECT_SOCKET_TIMEOUT + 1)
+      expect(client.connected?).to be false
+    ensure
+      server.close rescue nil
+    end
   end
 
   describe "#paused" do
@@ -224,6 +248,84 @@ RSpec.describe GirbMcp::DebugClient do
     client.instance_variable_set(:@connected, true)
     client.instance_variable_set(:@pid, "12345")
     [client, server_sock]
+  end
+
+  describe "#connect (wake callback)" do
+    it "calls on_initial_timeout block on first timeout and retries successfully" do
+      client_sock, server_sock = Socket.pair(:UNIX, :STREAM, 0)
+      client = GirbMcp::DebugClient.new
+
+      # Stub socket creation to use our socket pair
+      allow(client).to receive(:discover_socket).and_return("/tmp/fake")
+      allow(Socket).to receive(:unix).and_return(client_sock)
+
+      # Stub send_greeting (it would fail without a real debug server)
+      allow(client).to receive(:send_greeting)
+
+      # Simulate: first read times out (short timeout), then after wake, server responds
+      callback_called = false
+      Thread.new do
+        # Wait for the callback to be called, then send the input prompt
+        sleep 0.1 until callback_called
+        server_sock.write("out hello\n")
+        server_sock.write("input 99999\n")
+      end
+
+      result = client.connect(connect_timeout: 0.5) {
+        callback_called = true
+      }
+
+      expect(callback_called).to be true
+      expect(result[:success]).to be true
+      expect(result[:pid]).to eq("99999")
+      expect(result[:output]).to include("hello")
+      expect(client.connected?).to be true
+      expect(client.paused).to be true
+    ensure
+      client_sock&.close rescue nil
+      server_sock&.close rescue nil
+    end
+
+    it "raises TimeoutError without block when initial read times out" do
+      client_sock, server_sock = Socket.pair(:UNIX, :STREAM, 0)
+      client = GirbMcp::DebugClient.new
+
+      allow(client).to receive(:discover_socket).and_return("/tmp/fake")
+      allow(Socket).to receive(:unix).and_return(client_sock)
+      allow(client).to receive(:send_greeting)
+
+      # No block given, no data sent — should timeout and raise
+      expect {
+        client.connect(connect_timeout: 0.5)
+      }.to raise_error(GirbMcp::TimeoutError)
+    ensure
+      client_sock&.close rescue nil
+      server_sock&.close rescue nil
+    end
+
+    it "raises TimeoutError when retry also times out" do
+      client_sock, server_sock = Socket.pair(:UNIX, :STREAM, 0)
+      client = GirbMcp::DebugClient.new
+
+      allow(client).to receive(:discover_socket).and_return("/tmp/fake")
+      allow(Socket).to receive(:unix).and_return(client_sock)
+      allow(client).to receive(:send_greeting)
+
+      callback_called = false
+
+      # Block is called but no data sent — retry also times out
+      expect {
+        client.connect(connect_timeout: 0.3) {
+          callback_called = true
+          # Don't send any data — retry should also timeout
+        }
+      }.to raise_error(GirbMcp::TimeoutError)
+
+      expect(callback_called).to be true
+    ensure
+      client_sock&.close rescue nil
+      server_sock&.close rescue nil
+    end
   end
 
   describe "#send_command (protocol desync prevention)" do

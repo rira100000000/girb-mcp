@@ -223,7 +223,7 @@ module GirbMcp
 
         RUNNING_HINT = "The process is now running — to debug further, " \
                        "set breakpoints and use 'trigger_request' again, " \
-                       "or use 'connect' to re-pause the process."
+                       "or use 'connect' to reconnect (current session will be replaced)."
 
         def build_http_done_response(method, url, http_holder, client: nil)
           if http_holder[:error]

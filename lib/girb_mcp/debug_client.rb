@@ -9,6 +9,7 @@ module GirbMcp
     DEFAULT_WIDTH = 500
     DEFAULT_TIMEOUT = 15
     CONTINUE_TIMEOUT = 30
+    DISCONNECT_SOCKET_TIMEOUT = 2
 
     # ANSI escape code pattern
     ANSI_ESCAPE = /\e\[[0-9;]*m/
@@ -31,8 +32,14 @@ module GirbMcp
       @connected && @socket && !@socket.closed?
     end
 
-    # Connect to a debug session via Unix domain socket or TCP
-    def connect(path: nil, host: nil, port: nil)
+    # Connect to a debug session via Unix domain socket or TCP.
+    # Accepts an optional block (&on_initial_timeout) that is called when the
+    # initial read_until_input times out. This allows the caller to wake an
+    # IO-blocked process (e.g., by sending an HTTP request) so that the debug
+    # gem's pending pause (set by the SIGURG from greeting) can fire.
+    # If the block is given and the initial read times out, the block is called
+    # and read_until_input is retried once with a 10s timeout.
+    def connect(path: nil, host: nil, port: nil, connect_timeout: nil, &on_initial_timeout)
       disconnect if connected?
 
       if path
@@ -46,7 +53,13 @@ module GirbMcp
 
       # The debug gem protocol: client sends greeting first, then reads server output
       send_greeting
-      initial_output = read_until_input
+      initial_output = begin
+        read_until_input(timeout: connect_timeout || DEFAULT_TIMEOUT)
+      rescue TimeoutError
+        raise unless on_initial_timeout
+        on_initial_timeout.call
+        read_until_input(timeout: 10)
+      end
       @connected = true
       @paused = true
 
@@ -65,10 +78,7 @@ module GirbMcp
     end
 
     def disconnect
-      if @socket && !@socket.closed?
-        @socket.flush rescue nil
-        @socket.close
-      end
+      force_close_socket
       @socket = nil
       @pid = nil
       @connected = false
@@ -431,6 +441,19 @@ module GirbMcp
     end
 
     private
+
+    def force_close_socket
+      return unless @socket && !@socket.closed?
+
+      socket = @socket
+      closer = Thread.new do
+        socket.shutdown(:RDWR) rescue nil
+        socket.close rescue nil
+      end
+      unless closer.join(DISCONNECT_SOCKET_TIMEOUT)
+        closer.kill
+      end
+    end
 
     def send_greeting
       debug_version = resolve_debug_version
