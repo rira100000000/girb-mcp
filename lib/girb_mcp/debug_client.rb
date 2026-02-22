@@ -200,6 +200,25 @@ module GirbMcp
       !wait_thread.alive?
     end
 
+    # Find the most recently raised exception of a given class via ObjectSpace.
+    # Used as a fallback at catch breakpoints where $! is not yet set
+    # (the :raise TracePoint fires before $! is assigned).
+    # Returns "ExceptionClass: message" string, or nil if not found.
+    def find_raised_exception(exception_class_name)
+      result = send_command(
+        "p(begin; klass = Object.const_get(#{exception_class_name.inspect}); " \
+        "e = ObjectSpace.each_object(klass).max_by(&:object_id); " \
+        'e ? "#{e.class}: #{e.message}" : nil; rescue; nil; end)',
+      )
+      cleaned = result.strip.sub(/\A=> /, "")
+      return nil if cleaned == "nil" || cleaned.empty?
+
+      cleaned = cleaned[1..-2] if cleaned.start_with?('"') && cleaned.end_with?('"')
+      cleaned.empty? ? nil : cleaned
+    rescue GirbMcp::Error
+      nil
+    end
+
     # Check if the debugger is currently in a signal trap context.
     # This is common when connecting to Puma/Rails processes via SIGURG.
     # In trap context, thread operations (Mutex lock, DB pools, autoloading) fail

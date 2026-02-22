@@ -41,6 +41,7 @@ def build_mock_client(connected: true, pid: "12345", paused: true, trap_context:
   allow(client).to receive(:disconnect)
   allow(client).to receive(:read_stdout_output).and_return(nil)
   allow(client).to receive(:read_stderr_output).and_return(nil)
+  allow(client).to receive(:find_raised_exception).and_return(nil)
   allow(client).to receive(:in_trap_context?).and_return(trap_context)
   allow(client).to receive(:escape_trap_context!).and_return(nil)
   allow(client).to receive(:ensure_paused).and_return("")

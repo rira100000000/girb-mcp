@@ -84,6 +84,15 @@ module GirbMcp
 
       # Check for exception in scope ($!)
       exception_info = client.check_current_exception
+
+      # At catch breakpoints, $! is not yet set because the :raise TracePoint
+      # fires before Ruby assigns $!. Fall back to ObjectSpace to find the
+      # most recently created instance of the caught exception class.
+      if at_catch && exception_info.nil?
+        exception_class = output.match(CATCH_BREAKPOINT_PATTERN)&.captures&.first
+        exception_info = client.find_raised_exception(exception_class) if exception_class
+      end
+
       if exception_info
         if at_catch
           parts << "Caught exception: #{exception_info}"

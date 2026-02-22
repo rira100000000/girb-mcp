@@ -126,6 +126,23 @@ RSpec.describe GirbMcp::StopEventAnnotator do
       expect(result).to include("Caught exception: NoMethodError: undefined")
     end
 
+    it "falls back to ObjectSpace when $! is nil at catch breakpoints" do
+      output = 'Stop by #1  BP - Catch  "NoMethodError"  (line)'
+      allow(client).to receive(:check_current_exception).and_return(nil)
+      allow(client).to receive(:find_raised_exception).with("NoMethodError")
+        .and_return("NoMethodError: undefined method 'foo' for nil")
+      result = described_class.enrich_stop_context(output, client)
+      expect(result).to include("Caught exception: NoMethodError: undefined method 'foo' for nil")
+    end
+
+    it "shows nothing when both $! and ObjectSpace fail at catch breakpoints" do
+      output = 'Stop by #1  BP - Catch  "NoMethodError"  (line)'
+      allow(client).to receive(:check_current_exception).and_return(nil)
+      allow(client).to receive(:find_raised_exception).with("NoMethodError").and_return(nil)
+      result = described_class.enrich_stop_context(output, client)
+      expect(result).not_to include("Caught exception:")
+    end
+
     it "skips return value when NameError" do
       output = "Stop by #1  BP - Line  /path:10 (return)"
       allow(client).to receive(:send_command).with("p __return_value__").and_return("=> NameError: undefined")
