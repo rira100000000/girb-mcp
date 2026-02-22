@@ -47,6 +47,36 @@ RSpec.describe GirbMcp::Tools::EvaluateCode do
       expect(text).to include("hello world")
     end
 
+    it "suppresses captured stdout when it duplicates the return value (pp output)" do
+      # pp(5) writes "5\n" to $stdout AND returns => 5 — same content, show only once
+      allow(client).to receive(:send_command).with(/\$__girb_err=nil; pp/).and_return("=> 5")
+      allow(client).to receive(:send_command).with("p $__girb_err").and_return('=> nil')
+      allow(client).to receive(:send_command).with("$stdout = $__girb_old; p $__girb_cap.string").and_return(
+        '=> "5\n"'
+      )
+
+      response = described_class.call(code: "Order.completed.count", server_context: server_context)
+      text = response_text(response)
+      expect(text).to include("5")
+      expect(text).not_to include("Captured stdout")
+      expect(text).not_to include("Return value")
+    end
+
+    it "shows both sections when captured stdout has additional content" do
+      # puts "debug info"; 42 → captured has "debug info\n42\n", return value is "=> 42"
+      allow(client).to receive(:send_command).with(/\$__girb_err=nil; pp/).and_return("=> 42")
+      allow(client).to receive(:send_command).with("p $__girb_err").and_return('=> nil')
+      allow(client).to receive(:send_command).with("$stdout = $__girb_old; p $__girb_cap.string").and_return(
+        '=> "debug info\n42\n"'
+      )
+
+      response = described_class.call(code: 'puts "debug info"; 42', server_context: server_context)
+      text = response_text(response)
+      expect(text).to include("Return value:")
+      expect(text).to include("Captured stdout:")
+      expect(text).to include("debug info")
+    end
+
     it "propagates session error from client lookup" do
       allow(manager).to receive(:client).and_raise(
         GirbMcp::SessionError, "No active session"

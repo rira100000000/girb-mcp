@@ -81,8 +81,16 @@ module GirbMcp
                         "  3. Once stopped at the breakpoint, all operations work normally"
               end
             elsif captured
-              # Label both sections when stdout is present to avoid confusion
-              text = "Return value:\n#{output}\n\nCaptured stdout:\n#{captured}"
+              # pp() writes to $stdout, so captured stdout often contains
+              # just the pp output of the return value (identical content).
+              # Only show "Captured stdout" when it has additional content
+              # (e.g., from puts/print in the evaluated code).
+              return_val = output.strip.sub(/\A=> /, "")
+              if captured.strip == return_val.strip
+                text = output
+              else
+                text = "Return value:\n#{output}\n\nCaptured stdout:\n#{captured}"
+              end
             else
               text = output
             end
