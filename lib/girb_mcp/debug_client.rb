@@ -443,9 +443,11 @@ module GirbMcp
     end
 
     # List available debug sessions.
-    # Filters by: socket file exists, PID alive, and socket is connectable.
-    # The connectable check catches stale sockets where the PID was reused
-    # by a different process that doesn't listen on the debug socket.
+    # Filters by: socket file exists and socket is connectable (liveness probe).
+    # The connectable check is the sole authority — if the socket accepts
+    # connections, a debug process is listening regardless of whether the
+    # PID in the filename still matches (e.g. daemonized Rails servers fork
+    # after creating the socket, so the original PID exits).
     def self.list_sessions
       dir = socket_dir
       return [] unless dir && Dir.exist?(dir)
@@ -454,7 +456,7 @@ module GirbMcp
         File.socket?(path)
       end.filter_map do |path|
         pid = extract_pid(path)
-        next unless pid && process_alive?(pid) && socket_connectable?(path)
+        next unless pid && socket_connectable?(path)
 
         { path: path, pid: pid, name: extract_session_name(path) }
       end
