@@ -8,6 +8,16 @@ Rails.application.routes.draw do
     end
   end
 
+  resources :orders, only: [:index, :show, :create, :update] do
+    member do
+      post :cancel
+    end
+    collection do
+      get :user_orders
+      get :report
+    end
+  end
+
   # セッション管理
   post   "/login",  to: "sessions#create"
   get    "/me",     to: "sessions#show"

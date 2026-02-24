@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_02_16_002922) do
+ActiveRecord::Schema[8.1].define(version: 2026_02_22_000002) do
   create_table "comments", force: :cascade do |t|
     t.text "body"
     t.datetime "created_at", null: false
@@ -19,6 +19,29 @@ ActiveRecord::Schema[8.1].define(version: 2026_02_16_002922) do
     t.integer "user_id", null: false
     t.index ["post_id"], name: "index_comments_on_post_id"
     t.index ["user_id"], name: "index_comments_on_user_id"
+  end
+
+  create_table "order_items", force: :cascade do |t|
+    t.datetime "created_at", null: false
+    t.integer "order_id", null: false
+    t.string "product_name", null: false
+    t.integer "quantity", default: 1, null: false
+    t.decimal "tax_rate", precision: 5, scale: 4, default: "0.0", null: false
+    t.decimal "unit_price", precision: 10, scale: 2, null: false
+    t.datetime "updated_at", null: false
+    t.index ["order_id"], name: "index_order_items_on_order_id"
+  end
+
+  create_table "orders", force: :cascade do |t|
+    t.datetime "completed_at"
+    t.datetime "created_at", null: false
+    t.string "discount_code"
+    t.decimal "discount_percent", precision: 5, scale: 2
+    t.integer "status", default: 0, null: false
+    t.integer "total_cents", default: 0, null: false
+    t.datetime "updated_at", null: false
+    t.integer "user_id"
+    t.index ["user_id"], name: "index_orders_on_user_id"
   end
 
   create_table "posts", force: :cascade do |t|
@@ -43,5 +66,6 @@ ActiveRecord::Schema[8.1].define(version: 2026_02_16_002922) do
 
   add_foreign_key "comments", "posts"
   add_foreign_key "comments", "users"
+  add_foreign_key "order_items", "orders"
   add_foreign_key "posts", "users"
 end

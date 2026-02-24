@@ -1,6 +1,7 @@
 class User < ApplicationRecord
   has_many :posts, dependent: :destroy
   has_many :comments, dependent: :destroy
+  has_many :orders
 
   validates :name, presence: true, length: { maximum: 50 }
   validates :email, presence: true, uniqueness: true,
@@ -28,6 +29,6 @@ class User < ApplicationRecord
 
   def ensure_default_role
     # role_before_type_castで内部整数値を確認し、未設定なら初期値を設定
-    self.role = :member if role_before_type_cast.nil? || role_before_type_cast.zero?
+    self.role = :member if role_before_type_cast.nil? || role_before_type_cast == 0
   end
 end

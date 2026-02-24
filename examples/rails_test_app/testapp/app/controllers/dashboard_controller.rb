@@ -7,6 +7,7 @@ class DashboardController < ApplicationController
       published_posts: Post.published.count
     }
     @trending = Post.trending(3)
+    @revenue = Order.revenue_stats
 
     render html: <<~HTML.html_safe
       <!DOCTYPE html>
@@ -24,6 +25,12 @@ class DashboardController < ApplicationController
         <ol>
           #{@trending.map { |p| "<li>#{p.title} (#{p.comments.size} comments)</li>" }.join}
         </ol>
+        <h2>Revenue</h2>
+        <ul>
+          <li>Total Revenue: #{@revenue[:total_revenue]} cents</li>
+          <li>Average Order: #{@revenue[:average_order]} cents</li>
+          <li>Order Count: #{@revenue[:order_count]}</li>
+        </ul>
       </body>
       </html>
     HTML
