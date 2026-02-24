@@ -152,6 +152,13 @@ module GirbMcp
         @paused = true
         output
       end
+    rescue TimeoutError
+      # The debug gem is still processing the command — it hasn't sent
+      # `input PID` back. Mark as not paused so subsequent tool calls
+      # trigger auto_repause! (SIGURG/SIGINT) instead of sending another
+      # command into the unresponsive session.
+      @paused = false
+      raise
     rescue Errno::EPIPE, Errno::ECONNRESET, IOError => e
       @connected = false
       @paused = false
@@ -162,9 +169,13 @@ module GirbMcp
     # Send a command and wait briefly for the debug gem to read it, but don't
     # wait for a full response (which may never come, e.g., after `c` with no
     # breakpoint). Used when resuming a process before disconnecting.
-    def send_command_no_wait(command)
+    #
+    # When force: true, bypasses the @paused check. Use ONLY during cleanup/disconnect
+    # when a prior send_command timeout set @paused=false but the process is
+    # actually still paused in the debugger.
+    def send_command_no_wait(command, force: false)
       return unless connected?
-      return unless @paused # Sending command while running crashes the reader thread
+      return unless force || @paused # Sending command while running crashes the reader thread
 
       @mutex.synchronize do
         msg = "command #{@pid} #{@width} #{command}\n"
@@ -294,7 +305,8 @@ module GirbMcp
           remaining = [deadline - Time.now, 0.1].min
           break if remaining <= 0
 
-          break unless @socket.wait_readable(remaining)
+          ready = @socket.wait_readable(remaining)
+          next unless ready
 
           line = @socket.gets
           break unless line
@@ -327,6 +339,20 @@ module GirbMcp
       nil
     end
 
+    # Interrupt a running process via SIGINT and wait for it to pause.
+    # SIGINT can break through C-level blocking IO (unlike SIGURG used by repause).
+    # Returns "" if the process is now paused, nil if the process couldn't be found
+    # or the interrupt didn't work.
+    def interrupt_and_wait(timeout: 5)
+      return nil unless @pid
+      return "" if @paused
+
+      Process.kill("INT", @pid.to_i)
+      ensure_paused(timeout: timeout)
+    rescue Errno::ESRCH, Errno::EPERM
+      nil
+    end
+
     # Automatically re-pause the process if it's running.
     # Returns false if already paused, true if repause was performed.
     # Raises SessionError if the process cannot be re-paused (e.g., blocked on I/O).
@@ -335,10 +361,14 @@ module GirbMcp
 
       result = repause(timeout: 3)
       if result.nil?
-        raise SessionError, "Process is not paused and could not be re-paused automatically. " \
-                            "The process may be blocked on I/O. " \
-                            "Set a breakpoint and use 'trigger_request' to pause at a specific point, " \
-                            "or 'disconnect' and 'connect' to re-attach."
+        # SIGURG-based repause failed (e.g., process blocked on C-level IO).
+        # Fall back to SIGINT which can interrupt IO.select and similar calls.
+        int_result = interrupt_and_wait(timeout: 5)
+        if int_result.nil?
+          raise SessionError, "Process is not paused and could not be interrupted. " \
+                              "The process may have exited or be in an unrecoverable state. " \
+                              "Use 'disconnect' and 'connect' to re-attach."
+        end
       end
 
       # After repause via SIGURG, the process is in trap context.
@@ -350,14 +380,20 @@ module GirbMcp
       true
     end
 
-    # Re-pause a running process using the debug gem's `pause` protocol message.
-    # The `pause` message is the ONLY protocol message accepted when the process
-    # is NOT in subsession (running). Sending `command` while not in subsession
-    # crashes the debug gem's reader thread.
+    # Re-pause a running process by sending SIGURG directly.
     #
     # First drains any buffered socket data (in case a breakpoint was hit but the
     # `input PID` wasn't consumed due to a timeout). If not already paused, sends
-    # the `pause` protocol message which triggers SIGURG internally.
+    # SIGURG to the target process to trigger the debug gem's pause handler.
+    #
+    # Uses Process.kill("URG") instead of the `pause` protocol message to avoid
+    # leaving stale messages in the server's socket read buffer. When `pause` is
+    # written to the socket and the reader thread is blocked (e.g., executing a
+    # long-running eval), the message sits unread. After SIGINT recovery, the
+    # reader thread eventually reads the stale `pause` and fires SIGURG at an
+    # unexpected time — typically after disconnect, when `c` resumes the process.
+    # This re-pauses the process with no client connected, leaving the session
+    # thread stuck on process_group.sync and blocking future connections.
     #
     # Returns "" on success (process is paused), nil on timeout/failure.
     def repause(timeout: 3)
@@ -373,23 +409,25 @@ module GirbMcp
 
         return "" if @paused
 
-        # Step 2: Send `pause` protocol message. This is the only message the
-        # debug gem's reader thread accepts when not in subsession. It triggers
-        # SIGURG internally, causing a running thread to suspend and enter the
-        # debugger.
-        @socket.write("pause\n".b)
-        @socket.flush
+        # Step 2: Send SIGURG directly to the target process. This triggers the
+        # debug gem's signal handler, which pauses the running thread and enters
+        # subsession. Unlike the `pause` protocol message, this doesn't leave
+        # data in the server's socket read buffer that could cause stale pauses.
+        Process.kill("URG", @pid.to_i)
 
         # Step 3: Wait for `input PID` prompt
         result = wait_for_pause(timeout)
 
-        # The `pause` protocol message triggers SIGURG, which puts the process
-        # in signal trap context. Mark it so callers can adapt (e.g., avoid
-        # `require` or Mutex operations that hang in trap context).
+        # SIGURG puts the process in signal trap context. Mark it so callers
+        # can adapt (e.g., avoid `require` or Mutex operations that hang in
+        # trap context).
         @trap_context = true if result
 
         result
       end
+    rescue Errno::ESRCH, Errno::EPERM
+      # Process not found or no permission — can't repause
+      nil
     rescue Errno::EPIPE, Errno::ECONNRESET, IOError => e
       @connected = false
       @paused = false
@@ -652,8 +690,9 @@ module GirbMcp
       debug_log("read_until_input: TIMEOUT lines=#{output_lines.size}")
       raise TimeoutError.new(
         "Timeout after #{timeout}s waiting for debugger response. " \
-        "The target process may be busy or stuck. " \
-        "If this persists, try 'disconnect' and reconnect to reset the debug session.",
+        "The evaluated code may be blocking or taking too long.\n\n" \
+        "Recovery: the session will automatically try to interrupt and recover on the next command. " \
+        "If this persists, use 'disconnect' and reconnect.",
         final_output: final.empty? ? nil : final,
       )
     end

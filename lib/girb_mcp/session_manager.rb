@@ -316,20 +316,20 @@ module GirbMcp
 
       deadline = Time.now + RESUME_DEADLINE
 
-      # Restore original SIGINT handler
+      # Restore $stdout if evaluate_code left it redirected
       remaining = deadline - Time.now
       if remaining > 0
         begin
           info.client.send_command(
-            "p $_girb_orig_int ? (trap('INT',$_girb_orig_int);$_girb_orig_int=nil;:ok) : nil",
-            timeout: [remaining, 2].min,
+            '$stdout = $__girb_old if defined?($__girb_old) && $__girb_old',
+            timeout: [remaining, 1].min,
           )
         rescue GirbMcp::Error
           # Best-effort
         end
       end
 
-      # Delete all breakpoints so the process doesn't immediately pause again
+      # Delete all breakpoints FIRST so the process doesn't pause again
       remaining = deadline - Time.now
       if remaining > 0
         begin
@@ -349,7 +349,25 @@ module GirbMcp
         end
       end
 
-      info.client.send_command_no_wait("c")
+      # Restore original SIGINT handler
+      remaining = deadline - Time.now
+      if remaining > 0
+        begin
+          info.client.send_command(
+            "p $_girb_orig_int ? (trap('INT',$_girb_orig_int);$_girb_orig_int=nil;:ok) : nil",
+            timeout: [remaining, 2].min,
+          )
+        rescue GirbMcp::Error
+          # Best-effort
+        end
+      end
+
+      # Resume. Use force: true in case a cleanup command timed out
+      # and set @paused=false even though the process is still paused.
+      info.client.send_command_no_wait("c", force: true)
+
+      # Wait for the debug gem to settle (see disconnect.rb for details).
+      info.client.ensure_paused(timeout: 2)
     rescue StandardError
       # Best-effort: don't let resume failure prevent cleanup
     end

@@ -386,7 +386,7 @@ RSpec.describe GirbMcp::SessionManager do
       expect(client).to have_received(:send_command).with("info breakpoints", timeout: anything)
       expect(client).to have_received(:send_command).with("delete 0", timeout: anything)
       expect(client).to have_received(:send_command).with("delete 2", timeout: anything)
-      expect(client).to have_received(:send_command_no_wait).with("c")
+      expect(client).to have_received(:send_command_no_wait).with("c", force: true)
     end
 
     it "skips when client has wait_thread (run_script session)" do
@@ -429,7 +429,7 @@ RSpec.describe GirbMcp::SessionManager do
 
       manager.send(:resume_before_disconnect, info)
 
-      expect(client).to have_received(:send_command_no_wait).with("c")
+      expect(client).to have_received(:send_command_no_wait).with("c", force: true)
     end
   end
 end

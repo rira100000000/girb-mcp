@@ -123,6 +123,11 @@ module GirbMcp
           # Install double Ctrl+C force-quit handler on the target process
           install_sigint_handler(client)
 
+          # Clear existing breakpoints from previous sessions (unless restoring)
+          unless restore_breakpoints
+            clear_process_breakpoints(client)
+          end
+
           escaped = text.include?("Auto-escaped signal trap context")
 
           text += "\nIMPORTANT: The target process is now PAUSED. " \
@@ -528,6 +533,22 @@ module GirbMcp
           client.send_command("p begin;#{handler_code};:ok;rescue =>e;e.class.name end")
         rescue GirbMcp::Error
           # Best-effort: don't fail connect if handler installation fails
+        end
+
+        # Clear all breakpoints in the target process.
+        # This removes breakpoints left over from previous sessions that weren't
+        # cleaned up properly (e.g., after a timeout-induced disconnect).
+        def clear_process_breakpoints(client)
+          bp_output = client.send_command("info breakpoints", timeout: 3)
+          return if bp_output.strip.empty?
+
+          bp_output.each_line do |line|
+            if (match = line.match(/#(\d+)/))
+              client.send_command("delete #{match[1]}", timeout: 2) rescue nil
+            end
+          end
+        rescue GirbMcp::Error
+          # Best-effort — don't fail connect if BP cleanup fails
         end
 
         # Send an HTTP GET request in a background thread and wait for breakpoint hit.

@@ -47,8 +47,14 @@ module GirbMcp
           else
             # For connect sessions: best-effort cleanup (restore SIGINT,
             # delete BPs, continue) bounded by a hard deadline.
-            # Skip entirely if process is not paused — sending commands to
-            # a running process violates the debug protocol.
+            # If not paused, try SIGINT to re-pause before cleanup.
+            unless client.paused
+              begin
+                client.interrupt_and_wait(timeout: 3)
+              rescue GirbMcp::Error
+                # Best-effort — if interrupt fails, skip cleanup
+              end
+            end
             best_effort_cleanup(client) if client.paused
           end
 
@@ -67,20 +73,23 @@ module GirbMcp
         def best_effort_cleanup(client)
           deadline = Time.now + CLEANUP_DEADLINE
 
-          # Restore original SIGINT handler
+          # Restore $stdout if evaluate_code left it redirected (its ensure block
+          # fails when send_command timeout sets @paused=false).
           remaining = deadline - Time.now
           if remaining > 0
             begin
               client.send_command(
-                "p $_girb_orig_int ? (trap('INT',$_girb_orig_int);$_girb_orig_int=nil;:ok) : nil",
-                timeout: [remaining, 2].min,
+                '$stdout = $__girb_old if defined?($__girb_old) && $__girb_old',
+                timeout: [remaining, 1].min,
               )
             rescue GirbMcp::Error
               # Best-effort
             end
           end
 
-          # Delete all breakpoints so process doesn't pause again
+          # Delete all breakpoints FIRST — this is the most critical step.
+          # If breakpoints remain and the process resumes without a client,
+          # it will hit a breakpoint and become stuck with no way to continue.
           remaining = deadline - Time.now
           if remaining > 0
             begin
@@ -100,7 +109,31 @@ module GirbMcp
             end
           end
 
-          client.send_command_no_wait("c")
+          # Restore original SIGINT handler
+          remaining = deadline - Time.now
+          if remaining > 0
+            begin
+              client.send_command(
+                "p $_girb_orig_int ? (trap('INT',$_girb_orig_int);$_girb_orig_int=nil;:ok) : nil",
+                timeout: [remaining, 2].min,
+              )
+            rescue GirbMcp::Error
+              # Best-effort
+            end
+          end
+
+          # Resume the process. If a cleanup command timed out (setting
+          # @paused=false even though the process is actually still paused),
+          # use force: true to bypass the @paused check.
+          client.send_command_no_wait("c", force: true)
+
+          # Wait for the debug gem to settle after 'c'. After SIGINT recovery,
+          # the main thread needs to finish the interrupted eval and re-enter
+          # the command loop (sending `input PID`). If we close the socket
+          # before this completes, the debug gem's cleanup_reader closes @q_msg
+          # while the main thread is still pushing results, leaving it stuck
+          # on a futex. Draining here gives the debug gem time to settle.
+          client.ensure_paused(timeout: 2)
         end
       end
     end

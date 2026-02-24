@@ -417,6 +417,33 @@ RSpec.describe GirbMcp::DebugClient do
     end
   end
 
+  describe "#send_command (timeout sets @paused = false)" do
+    it "sets @paused to false on TimeoutError" do
+      client, server = setup_client_with_socket
+      client.instance_variable_set(:@paused, true)
+
+      # No response from server → timeout
+      expect { client.send_command("sleep_forever", timeout: 0.3) }.to raise_error(
+        GirbMcp::TimeoutError
+      )
+
+      expect(client.paused).to be false
+    ensure
+      server.close rescue nil
+    end
+
+    it "includes recovery message in timeout error" do
+      client, server = setup_client_with_socket
+      client.instance_variable_set(:@paused, true)
+
+      expect { client.send_command("slow_cmd", timeout: 0.3) }.to raise_error(
+        GirbMcp::TimeoutError, /Recovery.*automatically try to interrupt/
+      )
+    ensure
+      server.close rescue nil
+    end
+  end
+
   describe "#send_command (read_until_input timeout)" do
     it "always raises TimeoutError when input PID is not received" do
       client, server = setup_client_with_socket
@@ -456,6 +483,50 @@ RSpec.describe GirbMcp::DebugClient do
     end
   end
 
+  describe "#interrupt_and_wait" do
+    it "returns nil when pid is nil" do
+      client = GirbMcp::DebugClient.new
+      expect(client.interrupt_and_wait).to be_nil
+    end
+
+    it "returns empty string when already paused" do
+      client = GirbMcp::DebugClient.new
+      client.instance_variable_set(:@pid, "12345")
+      client.instance_variable_set(:@paused, true)
+      expect(client.interrupt_and_wait).to eq("")
+    end
+
+    it "sends SIGINT and waits for pause" do
+      client, server = setup_client_with_socket
+      client.instance_variable_set(:@paused, false)
+
+      allow(Process).to receive(:kill)
+
+      Thread.new do
+        sleep 0.05
+        server.write("input 12345\n")
+      end
+
+      result = client.interrupt_and_wait(timeout: 2)
+
+      expect(Process).to have_received(:kill).with("INT", 12345)
+      expect(result).to be_a(String)
+      expect(client.paused).to be true
+    ensure
+      server.close rescue nil
+    end
+
+    it "returns nil when process does not exist" do
+      client = GirbMcp::DebugClient.new
+      client.instance_variable_set(:@pid, "99999")
+      client.instance_variable_set(:@paused, false)
+
+      allow(Process).to receive(:kill).and_raise(Errno::ESRCH)
+
+      expect(client.interrupt_and_wait).to be_nil
+    end
+  end
+
   describe "#auto_repause!" do
     it "returns false when already paused" do
       client = GirbMcp::DebugClient.new
@@ -463,14 +534,39 @@ RSpec.describe GirbMcp::DebugClient do
       expect(client.auto_repause!).to be false
     end
 
-    it "raises SessionError when repause fails" do
+    it "raises SessionError when both repause and interrupt fail" do
       client = GirbMcp::DebugClient.new
       client.instance_variable_set(:@connected, true)
       client.instance_variable_set(:@paused, false)
-      # No socket → repause returns nil
+      client.instance_variable_set(:@pid, "99999")
+
+      # repause returns nil (no socket), interrupt_and_wait returns nil (ESRCH)
+      allow(Process).to receive(:kill).and_raise(Errno::ESRCH)
+
       expect { client.auto_repause! }.to raise_error(
-        GirbMcp::SessionError, /not paused/
+        GirbMcp::SessionError, /could not be interrupted/
       )
+    end
+
+    it "falls back to SIGINT when repause fails" do
+      client, server = setup_client_with_socket
+      client.instance_variable_set(:@paused, false)
+
+      # Stub repause to return nil (simulating SIGURG failure on IO-blocked process)
+      allow(client).to receive(:repause).and_return(nil)
+      allow(Process).to receive(:kill).with("INT", 12345)
+
+      Thread.new do
+        sleep 0.05
+        server.write("input 12345\n")
+      end
+
+      result = client.auto_repause!
+      expect(result).to be true
+      expect(Process).to have_received(:kill).with("INT", 12345)
+      expect(client.paused).to be true
+    ensure
+      server.close rescue nil
     end
 
     it "does not attempt escape when escape_target is nil" do
@@ -479,9 +575,11 @@ RSpec.describe GirbMcp::DebugClient do
       client.listen_ports = [3000]
       client.escape_target = nil
 
-      # server.gets blocks until "pause\n" arrives — no sleep needed
+      # repause now sends SIGURG directly via Process.kill instead of socket.
+      # Mock it to succeed, then write input prompt after a brief delay.
+      allow(Process).to receive(:kill).with("URG", 12345)
       Thread.new do
-        server.gets # reads "pause\n"
+        sleep 0.05
         server.write("input 12345\n")
       end
 
@@ -498,8 +596,9 @@ RSpec.describe GirbMcp::DebugClient do
       client.listen_ports = []
       client.escape_target = { file: "/gems/metal.rb", line: 211, path: "/" }
 
+      allow(Process).to receive(:kill).with("URG", 12345)
       Thread.new do
-        server.gets # reads "pause\n"
+        sleep 0.05
         server.write("input 12345\n")
       end
 
@@ -526,8 +625,9 @@ RSpec.describe GirbMcp::DebugClient do
       allow(http_double).to receive(:read_timeout=)
       allow(http_double).to receive(:get) { bp_written.pop; Net::HTTPResponse }
 
+      allow(Process).to receive(:kill).with("URG", 12345)
       Thread.new do
-        server.gets # "pause\n"
+        sleep 0.05
         server.write("input 12345\n")
 
         server.gets # "command ... break ..."
@@ -566,7 +666,7 @@ RSpec.describe GirbMcp::DebugClient do
 
       server_thread = Thread.new do
         Thread.current.report_on_exception = false
-        server.gets # "pause\n"
+        sleep 0.05
         server.write("input 12345\n")
 
         server.gets # "command ... break ..."
@@ -579,6 +679,7 @@ RSpec.describe GirbMcp::DebugClient do
       rescue IOError
         # Server socket may be closed by ensure block
       end
+      allow(Process).to receive(:kill).with("URG", 12345)
 
       result = client.auto_repause!
       expect(result).to be true

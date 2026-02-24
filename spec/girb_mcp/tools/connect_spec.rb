@@ -812,5 +812,54 @@ RSpec.describe GirbMcp::Tools::Connect do
         expect(text).to include("Connected to debug session")
       end
     end
+
+    context "clearing existing breakpoints on connect" do
+      it "clears existing breakpoints by default" do
+        bp_output = "#0  BP - Line  app/controllers/users_controller.rb:10\n" \
+                    "#1  BP - Line  app/models/user.rb:20\n"
+        allow(client).to receive(:send_command)
+          .with("info breakpoints", timeout: 3)
+          .and_return(bp_output)
+        allow(client).to receive(:send_command)
+          .with("delete 0", timeout: 2)
+          .and_return("")
+        allow(client).to receive(:send_command)
+          .with("delete 1", timeout: 2)
+          .and_return("")
+
+        described_class.call(server_context: server_context)
+
+        expect(client).to have_received(:send_command).with("info breakpoints", timeout: 3)
+        expect(client).to have_received(:send_command).with("delete 0", timeout: 2)
+        expect(client).to have_received(:send_command).with("delete 1", timeout: 2)
+      end
+
+      it "does not clear breakpoints when restore_breakpoints is true" do
+        described_class.call(restore_breakpoints: true, server_context: server_context)
+
+        expect(client).not_to have_received(:send_command).with("info breakpoints", timeout: 3)
+      end
+
+      it "handles empty breakpoint list" do
+        allow(client).to receive(:send_command)
+          .with("info breakpoints", timeout: 3)
+          .and_return("")
+
+        described_class.call(server_context: server_context)
+
+        expect(client).not_to have_received(:send_command).with(/\Adelete \d/, timeout: 2)
+      end
+
+      it "continues connect when breakpoint deletion fails" do
+        allow(client).to receive(:send_command)
+          .with("info breakpoints", timeout: 3)
+          .and_raise(GirbMcp::ConnectionError, "lost connection")
+
+        response = described_class.call(server_context: server_context)
+        text = response_text(response)
+
+        expect(text).to include("Connected to debug session")
+      end
+    end
   end
 end

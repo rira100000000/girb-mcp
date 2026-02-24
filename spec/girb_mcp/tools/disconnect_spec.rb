@@ -54,7 +54,7 @@ RSpec.describe GirbMcp::Tools::Disconnect do
       response = described_class.call(server_context: server_context)
       text = response_text(response)
 
-      expect(client).to have_received(:send_command_no_wait).with("c")
+      expect(client).to have_received(:send_command_no_wait).with("c", force: true)
       expect(text).to include("Disconnected from session")
     end
 
@@ -70,7 +70,7 @@ RSpec.describe GirbMcp::Tools::Disconnect do
       expect(client).to have_received(:send_command).with("info breakpoints", timeout: anything)
       expect(client).to have_received(:send_command).with("delete 0", timeout: anything)
       expect(client).to have_received(:send_command).with("delete 1", timeout: anything)
-      expect(client).to have_received(:send_command_no_wait).with("c")
+      expect(client).to have_received(:send_command_no_wait).with("c", force: true)
     end
 
     it "skips BP deletion when no breakpoints are set" do
@@ -79,7 +79,7 @@ RSpec.describe GirbMcp::Tools::Disconnect do
       described_class.call(server_context: server_context)
 
       expect(client).not_to have_received(:send_command).with(/\Adelete/, anything)
-      expect(client).to have_received(:send_command_no_wait).with("c")
+      expect(client).to have_received(:send_command_no_wait).with("c", force: true)
     end
 
     it "continues even when BP deletion fails" do
@@ -89,17 +89,43 @@ RSpec.describe GirbMcp::Tools::Disconnect do
 
       described_class.call(server_context: server_context)
 
-      expect(client).to have_received(:send_command_no_wait).with("c")
+      expect(client).to have_received(:send_command_no_wait).with("c", force: true)
     end
 
-    it "skips cleanup entirely when process is not paused" do
-      allow(client).to receive(:paused).and_return(false)
+    it "tries interrupt_and_wait when process is not paused" do
+      allow(client).to receive(:paused).and_return(false, true)
+      allow(client).to receive(:interrupt_and_wait).with(timeout: 3).and_return("")
 
       response = described_class.call(server_context: server_context)
       text = response_text(response)
 
+      expect(client).to have_received(:interrupt_and_wait).with(timeout: 3)
+      expect(client).to have_received(:send_command_no_wait).with("c", force: true)
+      expect(text).to include("Disconnected from session")
+    end
+
+    it "skips cleanup when interrupt_and_wait fails" do
+      allow(client).to receive(:paused).and_return(false)
+      allow(client).to receive(:interrupt_and_wait).with(timeout: 3).and_return(nil)
+
+      response = described_class.call(server_context: server_context)
+      text = response_text(response)
+
+      expect(client).to have_received(:interrupt_and_wait).with(timeout: 3)
       expect(client).not_to have_received(:send_command)
       expect(client).not_to have_received(:send_command_no_wait)
+      expect(text).to include("Disconnected from session")
+    end
+
+    it "handles interrupt_and_wait error gracefully" do
+      allow(client).to receive(:paused).and_return(false)
+      allow(client).to receive(:interrupt_and_wait).and_raise(
+        GirbMcp::ConnectionError, "Connection lost"
+      )
+
+      response = described_class.call(server_context: server_context)
+      text = response_text(response)
+
       expect(text).to include("Disconnected from session")
     end
 
