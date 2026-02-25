@@ -9,8 +9,9 @@ RSpec.describe GirbMcp::Tools::InspectObject do
     it "returns value, class, and instance variables" do
       allow(client).to receive(:send_command).with("pp user").and_return('#<User id: 1, name: "Alice">')
       allow(client).to receive(:send_command)
-        .with("p [(user).class.to_s, (user).instance_variables]")
-        .and_return('=> ["User", [:@id, :@name]]')
+        .with("p [(user).class.to_s, (user).instance_variables, " \
+              "(user).is_a?(Module) ? (user).class_variables : nil]")
+        .and_return('=> ["User", [:@id, :@name], nil]')
 
       response = described_class.call(expression: "user", server_context: server_context)
       text = response_text(response)
@@ -18,12 +19,14 @@ RSpec.describe GirbMcp::Tools::InspectObject do
       expect(text).to include("User")
       expect(text).to include("Class: User")
       expect(text).to include("Instance variables: [:@id, :@name]")
+      expect(text).not_to include("Class variables:")
     end
 
     it "handles timeout on meta query gracefully" do
       allow(client).to receive(:send_command).with("pp x").and_return("42")
       allow(client).to receive(:send_command)
-        .with("p [(x).class.to_s, (x).instance_variables]")
+        .with("p [(x).class.to_s, (x).instance_variables, " \
+              "(x).is_a?(Module) ? (x).class_variables : nil]")
         .and_raise(GirbMcp::TimeoutError, "timeout")
 
       response = described_class.call(expression: "x", server_context: server_context)
@@ -37,13 +40,57 @@ RSpec.describe GirbMcp::Tools::InspectObject do
     it "handles unparseable meta output gracefully" do
       allow(client).to receive(:send_command).with("pp x").and_return("42")
       allow(client).to receive(:send_command)
-        .with("p [(x).class.to_s, (x).instance_variables]")
+        .with("p [(x).class.to_s, (x).instance_variables, " \
+              "(x).is_a?(Module) ? (x).class_variables : nil]")
         .and_return("=> something unexpected")
 
       response = described_class.call(expression: "x", server_context: server_context)
       text = response_text(response)
       expect(text).to include("Value:")
       expect(text).to include("Class: something unexpected")
+    end
+
+    context "class variables" do
+      it "displays class variables when inspecting a Class object" do
+        allow(client).to receive(:send_command).with("pp Order").and_return("Order")
+        allow(client).to receive(:send_command)
+          .with("p [(Order).class.to_s, (Order).instance_variables, " \
+                "(Order).is_a?(Module) ? (Order).class_variables : nil]")
+          .and_return('=> ["Class", [:@table_name], [:@@count, :@@default_status]]')
+
+        response = described_class.call(expression: "Order", server_context: server_context)
+        text = response_text(response)
+        expect(text).to include("Class: Class")
+        expect(text).to include("Instance variables: [:@table_name]")
+        expect(text).to include("Class variables: [:@@count, :@@default_status]")
+      end
+
+      it "does not display class variables section for regular instances" do
+        allow(client).to receive(:send_command).with("pp obj").and_return('#<Object:0x00007f>')
+        allow(client).to receive(:send_command)
+          .with("p [(obj).class.to_s, (obj).instance_variables, " \
+                "(obj).is_a?(Module) ? (obj).class_variables : nil]")
+          .and_return('=> ["Object", [:@x], nil]')
+
+        response = described_class.call(expression: "obj", server_context: server_context)
+        text = response_text(response)
+        expect(text).to include("Class: Object")
+        expect(text).to include("Instance variables: [:@x]")
+        expect(text).not_to include("Class variables:")
+      end
+
+      it "displays empty class variables for a Class with no class variables" do
+        allow(client).to receive(:send_command).with("pp MyClass").and_return("MyClass")
+        allow(client).to receive(:send_command)
+          .with("p [(MyClass).class.to_s, (MyClass).instance_variables, " \
+                "(MyClass).is_a?(Module) ? (MyClass).class_variables : nil]")
+          .and_return('=> ["Class", [], []]')
+
+        response = described_class.call(expression: "MyClass", server_context: server_context)
+        text = response_text(response)
+        expect(text).to include("Class: Class")
+        expect(text).to include("Class variables: []")
+      end
     end
 
     it "handles session error" do
@@ -61,8 +108,9 @@ RSpec.describe GirbMcp::Tools::InspectObject do
 
         allow(client_in_trap).to receive(:send_command).with("pp user").and_return("42")
         allow(client_in_trap).to receive(:send_command)
-          .with("p [(user).class.to_s, (user).instance_variables]")
-          .and_return('=> ["Integer", []]')
+          .with("p [(user).class.to_s, (user).instance_variables, " \
+                "(user).is_a?(Module) ? (user).class_variables : nil]")
+          .and_return('=> ["Integer", [], nil]')
 
         response = described_class.call(
           expression: "user",
@@ -75,8 +123,9 @@ RSpec.describe GirbMcp::Tools::InspectObject do
       it "does not append [trap context] when not in trap context" do
         allow(client).to receive(:send_command).with("pp x").and_return("42")
         allow(client).to receive(:send_command)
-          .with("p [(x).class.to_s, (x).instance_variables]")
-          .and_return('=> ["Integer", []]')
+          .with("p [(x).class.to_s, (x).instance_variables, " \
+                "(x).is_a?(Module) ? (x).class_variables : nil]")
+          .and_return('=> ["Integer", [], nil]')
 
         response = described_class.call(expression: "x", server_context: server_context)
         text = response_text(response)

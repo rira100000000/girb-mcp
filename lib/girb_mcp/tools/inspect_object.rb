@@ -34,14 +34,16 @@ module GirbMcp
           value_output = client.send_command("pp #{expression}")
           parts << "Value:\n#{value_output}"
 
-          # RT 2: Get class + instance variables in a single command
+          # RT 2: Get class + instance variables (+ class variables if Module) in a single command
           begin
             meta_output = client.send_command(
-              "p [(#{expression}).class.to_s, (#{expression}).instance_variables]",
+              "p [(#{expression}).class.to_s, (#{expression}).instance_variables, " \
+              "(#{expression}).is_a?(Module) ? (#{expression}).class_variables : nil]",
             )
-            class_name, ivars = parse_meta(meta_output)
+            class_name, ivars, cvars = parse_meta(meta_output)
             parts << "Class: #{class_name}" if class_name
             parts << "Instance variables: #{ivars}" if ivars
+            parts << "Class variables: #{cvars}" if cvars
           rescue GirbMcp::TimeoutError
             parts << "Class: (timed out)"
             parts << "Instance variables: (timed out)"
@@ -56,16 +58,17 @@ module GirbMcp
 
         private
 
-        # Parse combined meta output: => ["ClassName", [:@ivar1, :@ivar2]]
-        # Returns [class_name, ivars_string] or falls back to raw output.
+        # Parse combined meta output: => ["ClassName", [:@ivar1, :@ivar2], [:@@cvar1] or nil]
+        # Returns [class_name, ivars_string, cvars_string_or_nil] or falls back to raw output.
         def parse_meta(output)
           cleaned = output.strip.sub(/\A=> /, "")
-          # Match: ["ClassName", [...]]
-          if (match = cleaned.match(/\A\["([^"]*)",\s*(\[.*\])\]\z/))
-            [match[1], match[2]]
+          # Match: ["ClassName", [...], [...] or nil]
+          if (match = cleaned.match(/\A\["([^"]*)",\s*(\[.*?\]),\s*(nil|\[.*?\])\]\z/))
+            cvars = match[3] == "nil" ? nil : match[3]
+            [match[1], match[2], cvars]
           else
             # Fallback: return raw output as class info
-            [cleaned, nil]
+            [cleaned, nil, nil]
           end
         end
 

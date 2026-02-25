@@ -314,11 +314,36 @@ module GirbMcp
         end
 
         def format_html_body(body)
-          if body.length > 1000
-            "#{body[0, 1000]}\n\n... (HTML truncated, #{body.length} bytes total)"
-          else
-            body
+          parts = []
+          parts << "Content-Length: #{body.bytesize}"
+
+          # Extract title
+          if (match = body.match(/<title[^>]*>(.*?)<\/title>/im))
+            parts << "Title: #{match[1].strip}"
           end
+
+          # Strip tags and extract text content
+          text = body.gsub(/<script[^>]*>.*?<\/script>/im, " ")
+                     .gsub(/<style[^>]*>.*?<\/style>/im, " ")
+                     .gsub(/<[^>]+>/, " ")
+                     .gsub(/&nbsp;/, " ")
+                     .gsub(/&amp;/, "&")
+                     .gsub(/&lt;/, "<")
+                     .gsub(/&gt;/, ">")
+                     .gsub(/&quot;/, '"')
+                     .gsub(/&#\d+;/, "")
+                     .gsub(/\s+/, " ")
+                     .strip
+
+          if text.empty?
+            parts << "Body: (no text content)"
+          elsif text.length > 500
+            parts << "Body text (first 500 chars):\n#{text[0, 500]}..."
+          else
+            parts << "Body text:\n#{text}"
+          end
+
+          parts.join("\n")
         end
 
         # Build diagnostic info about current breakpoints for timeout/no-hit messages.

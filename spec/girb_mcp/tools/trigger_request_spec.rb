@@ -595,8 +595,8 @@ RSpec.describe GirbMcp::Tools::TriggerRequest do
         expect(text).to include("\"age\": 30")
       end
 
-      it "truncates HTML responses over 1000 chars" do
-        long_html = "<html><body>#{"x" * 1500}</body></html>"
+      it "summarizes long HTML responses" do
+        long_html = "<html><head><title>My Page</title></head><body>#{"x" * 1500}</body></html>"
         stub_http_response(
           body: long_html,
           headers: { "content-type" => ["text/html; charset=utf-8"] },
@@ -609,8 +609,83 @@ RSpec.describe GirbMcp::Tools::TriggerRequest do
         )
         text = response_text(response)
 
-        expect(text).to include("HTML truncated")
-        expect(text).to include("bytes total")
+        expect(text).to include("Content-Length:")
+        expect(text).to include("Title: My Page")
+        expect(text).to include("Body text (first 500 chars):")
+        expect(text).not_to include("<html>")
+        expect(text).not_to include("<body>")
+      end
+
+      it "extracts title from HTML" do
+        html = "<html><head><title>Dashboard</title></head><body><p>Hello</p></body></html>"
+        stub_http_response(
+          body: html,
+          headers: { "content-type" => ["text/html"] },
+        )
+
+        response = described_class.call(
+          method: "GET",
+          url: "http://localhost:3000/",
+          server_context: server_context,
+        )
+        text = response_text(response)
+
+        expect(text).to include("Title: Dashboard")
+        expect(text).to include("Body text:\nDashboard Hello")
+      end
+
+      it "strips script and style tags from HTML" do
+        html = '<html><head><style>body { color: red; }</style></head>' \
+               '<body><script>alert("xss")</script><p>Visible</p></body></html>'
+        stub_http_response(
+          body: html,
+          headers: { "content-type" => ["text/html"] },
+        )
+
+        response = described_class.call(
+          method: "GET",
+          url: "http://localhost:3000/",
+          server_context: server_context,
+        )
+        text = response_text(response)
+
+        expect(text).to include("Body text:\nVisible")
+        expect(text).not_to include("alert")
+        expect(text).not_to include("color: red")
+      end
+
+      it "converts HTML entities" do
+        html = "<html><body>&amp; &lt;tag&gt; &quot;quoted&quot;</body></html>"
+        stub_http_response(
+          body: html,
+          headers: { "content-type" => ["text/html"] },
+        )
+
+        response = described_class.call(
+          method: "GET",
+          url: "http://localhost:3000/",
+          server_context: server_context,
+        )
+        text = response_text(response)
+
+        expect(text).to include('& <tag> "quoted"')
+      end
+
+      it "handles HTML with no text content" do
+        html = "<html><head></head><body><img src='logo.png'></body></html>"
+        stub_http_response(
+          body: html,
+          headers: { "content-type" => ["text/html"] },
+        )
+
+        response = described_class.call(
+          method: "GET",
+          url: "http://localhost:3000/",
+          server_context: server_context,
+        )
+        text = response_text(response)
+
+        expect(text).to include("Body: (no text content)")
       end
 
       it "shows redirect location" do
