@@ -29,7 +29,13 @@ module GirbMcp
     # socket leaks when reconnecting to the same process.
     # Accepts an optional block that is passed through to DebugClient#connect
     # as the on_initial_timeout callback (used to wake IO-blocked processes).
-    def connect(session_id: nil, path: nil, host: nil, port: nil, connect_timeout: nil, &on_initial_timeout)
+    def connect(session_id: nil, path: nil, host: nil, port: nil,
+                connect_timeout: nil, pre_cleanup_pid: nil, &on_initial_timeout)
+      # Pre-cleanup: disconnect existing sessions for the same PID/session_id
+      # BEFORE establishing a new connection. The old session's socket occupies
+      # the debug gem, so the new connect() would timeout if not cleaned up first.
+      pre_cleanup(session_id: session_id, pid: pre_cleanup_pid)
+
       client = DebugClient.new
       result = client.connect(path: path, host: host, port: port,
                               connect_timeout: connect_timeout, &on_initial_timeout)
@@ -241,6 +247,25 @@ module GirbMcp
     end
 
     private
+
+    def pre_cleanup(session_id:, pid:)
+      @mutex.synchronize do
+        if session_id
+          info = @sessions.delete(session_id)
+          info&.client&.disconnect rescue nil
+        end
+        if pid
+          pid_str = pid.to_s
+          sids = @sessions.each_with_object([]) do |(sid, info), acc|
+            acc << sid if info.client.pid.to_s == pid_str
+          end
+          sids.each do |sid|
+            info = @sessions.delete(sid)
+            info&.client&.disconnect rescue nil
+          end
+        end
+      end
+    end
 
     def start_reaper
       @reaper_thread = Thread.new do

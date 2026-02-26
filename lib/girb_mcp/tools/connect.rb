@@ -75,6 +75,7 @@ module GirbMcp
             host: host,
             port: port,
             connect_timeout: connect_timeout,
+            pre_cleanup_pid: pre_target_pid,
           ) {
             if pre_listen_ports.any?
               woke = true

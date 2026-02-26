@@ -69,6 +69,60 @@ RSpec.describe GirbMcp::SessionManager do
     end
   end
 
+  describe "#connect (pre_cleanup)" do
+    it "disconnects existing session with the same PID before connecting" do
+      old_client = build_mock_client(pid: "100")
+      sessions = manager.instance_variable_get(:@sessions)
+      sessions["session_100"] = GirbMcp::SessionManager::SessionInfo.new(
+        client: old_client, connected_at: Time.now, last_activity_at: Time.now,
+      )
+
+      new_client = build_mock_client(pid: "100")
+      allow(GirbMcp::DebugClient).to receive(:new).and_return(new_client)
+      allow(new_client).to receive(:connect).and_return({ success: true, pid: "100", output: "ok" })
+
+      manager.connect(pre_cleanup_pid: 100)
+
+      expect(old_client).to have_received(:disconnect)
+      expect(sessions).to have_key("session_100")
+      expect(sessions["session_100"].client).to eq(new_client)
+    end
+
+    it "disconnects existing session with the same session_id before connecting" do
+      old_client = build_mock_client(pid: "200")
+      sessions = manager.instance_variable_get(:@sessions)
+      sessions["my_session"] = GirbMcp::SessionManager::SessionInfo.new(
+        client: old_client, connected_at: Time.now, last_activity_at: Time.now,
+      )
+
+      new_client = build_mock_client(pid: "300")
+      allow(GirbMcp::DebugClient).to receive(:new).and_return(new_client)
+      allow(new_client).to receive(:connect).and_return({ success: true, pid: "300", output: "ok" })
+
+      manager.connect(session_id: "my_session")
+
+      expect(old_client).to have_received(:disconnect)
+      expect(sessions["my_session"].client).to eq(new_client)
+    end
+
+    it "does not affect sessions with different PIDs" do
+      other_client = build_mock_client(pid: "300")
+      sessions = manager.instance_variable_get(:@sessions)
+      sessions["session_300"] = GirbMcp::SessionManager::SessionInfo.new(
+        client: other_client, connected_at: Time.now, last_activity_at: Time.now,
+      )
+
+      new_client = build_mock_client(pid: "400")
+      allow(GirbMcp::DebugClient).to receive(:new).and_return(new_client)
+      allow(new_client).to receive(:connect).and_return({ success: true, pid: "400", output: "ok" })
+
+      manager.connect(pre_cleanup_pid: 400)
+
+      expect(other_client).not_to have_received(:disconnect)
+      expect(sessions).to have_key("session_300")
+    end
+  end
+
   describe "#connect (reconnect cleanup)" do
     it "cleans up old session with the same sid on reconnect" do
       old_client = build_mock_client(pid: "100")

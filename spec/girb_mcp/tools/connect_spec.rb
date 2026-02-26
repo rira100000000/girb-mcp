@@ -47,6 +47,40 @@ RSpec.describe GirbMcp::Tools::Connect do
       )
     end
 
+    it "passes pre_cleanup_pid from resolved target PID" do
+      allow(GirbMcp::DebugClient).to receive(:extract_pid)
+        .with("/tmp/rdbg-1000/rdbg-99999")
+        .and_return(99999)
+
+      # No listen ports
+      allow(Dir).to receive(:exist?).and_call_original
+      allow(Dir).to receive(:exist?).with("/proc/99999/fd").and_return(false)
+
+      received_pid = nil
+      allow(manager).to receive(:connect) do |**kwargs, &_block|
+        received_pid = kwargs[:pre_cleanup_pid]
+        { success: true, pid: "99999", output: "ok", session_id: "session_99999" }
+      end
+      allow(manager).to receive(:client).and_return(client)
+
+      described_class.call(path: "/tmp/rdbg-1000/rdbg-99999", server_context: server_context)
+
+      expect(received_pid).to eq(99999)
+    end
+
+    it "passes nil pre_cleanup_pid for TCP port connections" do
+      received_pid = nil
+      allow(manager).to receive(:connect) do |**kwargs, &_block|
+        received_pid = kwargs[:pre_cleanup_pid]
+        { success: true, pid: "12345", output: "ok", session_id: "session_12345" }
+      end
+      allow(manager).to receive(:client).and_return(client)
+
+      described_class.call(port: 12345, server_context: server_context)
+
+      expect(received_pid).to be_nil
+    end
+
     it "shows restored breakpoints" do
       allow(manager).to receive(:restore_breakpoints).and_return([
         { spec: "break file.rb:10", output: "#1 BP - Line file.rb:10" },

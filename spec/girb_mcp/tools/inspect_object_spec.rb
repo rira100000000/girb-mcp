@@ -51,18 +51,38 @@ RSpec.describe GirbMcp::Tools::InspectObject do
     end
 
     context "class variables" do
-      it "displays class variables when inspecting a Class object" do
+      it "displays class variable values when inspecting a Class object" do
         allow(client).to receive(:send_command).with("pp Order").and_return("Order")
         allow(client).to receive(:send_command)
           .with("p [(Order).class.to_s, (Order).instance_variables, " \
                 "(Order).is_a?(Module) ? (Order).class_variables : nil]")
           .and_return('=> ["Class", [:@table_name], [:@@count, :@@default_status]]')
+        allow(client).to receive(:send_command)
+          .with("pp Hash[(Order).class_variables.map{|v|" \
+                "[v,(Order).class_variable_get(v) rescue '(error)']}]")
+          .and_return('{:@@count=>42, :@@default_status=>:pending}')
 
         response = described_class.call(expression: "Order", server_context: server_context)
         text = response_text(response)
         expect(text).to include("Class: Class")
         expect(text).to include("Instance variables: [:@table_name]")
-        expect(text).to include("Class variables: [:@@count, :@@default_status]")
+        expect(text).to include("Class variables:\n{:@@count=>42, :@@default_status=>:pending}")
+      end
+
+      it "falls back to names only when class variable value query times out" do
+        allow(client).to receive(:send_command).with("pp Order").and_return("Order")
+        allow(client).to receive(:send_command)
+          .with("p [(Order).class.to_s, (Order).instance_variables, " \
+                "(Order).is_a?(Module) ? (Order).class_variables : nil]")
+          .and_return('=> ["Class", [:@table_name], [:@@count]]')
+        allow(client).to receive(:send_command)
+          .with("pp Hash[(Order).class_variables.map{|v|" \
+                "[v,(Order).class_variable_get(v) rescue '(error)']}]")
+          .and_raise(GirbMcp::TimeoutError, "timeout")
+
+        response = described_class.call(expression: "Order", server_context: server_context)
+        text = response_text(response)
+        expect(text).to include("Class variables: [:@@count]")
       end
 
       it "does not display class variables section for regular instances" do

@@ -43,7 +43,21 @@ module GirbMcp
             class_name, ivars, cvars = parse_meta(meta_output)
             parts << "Class: #{class_name}" if class_name
             parts << "Instance variables: #{ivars}" if ivars
-            parts << "Class variables: #{cvars}" if cvars
+
+            # RT 3: Get class variable values (only for Module/Class with class variables)
+            if cvars && cvars != "[]"
+              begin
+                cvar_values = client.send_command(
+                  "pp Hash[(#{expression}).class_variables.map{|v|" \
+                  "[v,(#{expression}).class_variable_get(v) rescue '(error)']}]",
+                )
+                parts << "Class variables:\n#{cvar_values}"
+              rescue GirbMcp::TimeoutError
+                parts << "Class variables: #{cvars}"
+              end
+            elsif cvars
+              parts << "Class variables: #{cvars}"
+            end
           rescue GirbMcp::TimeoutError
             parts << "Class: (timed out)"
             parts << "Instance variables: (timed out)"
