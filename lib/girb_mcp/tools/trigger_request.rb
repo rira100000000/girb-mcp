@@ -20,6 +20,13 @@ module GirbMcp
                   "You do NOT need to call 'continue_execution' first — just set your breakpoints, then call this tool. " \
                   "For non-GET requests to Rails, CSRF protection is automatically disabled during the request."
 
+      annotations(
+        title: "Trigger HTTP Request",
+        read_only_hint: false,
+        destructive_hint: false,
+        open_world_hint: true,
+      )
+
       input_schema(
         properties: {
           method: {

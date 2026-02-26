@@ -15,6 +15,13 @@ module GirbMcp
                   "Note: Variable values may be truncated. " \
                   "Use 'evaluate_code' or 'inspect_object' for full details on specific variables."
 
+      annotations(
+        title: "Get Execution Context",
+        read_only_hint: true,
+        destructive_hint: false,
+        open_world_hint: false,
+      )
+
       input_schema(
         properties: {
           session_id: {

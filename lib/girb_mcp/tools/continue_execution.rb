@@ -12,6 +12,13 @@ module GirbMcp
                   "Tip: To catch exceptions before they crash the process, use " \
                   "set_breakpoint(exception_class: 'NoMethodError') before continuing."
 
+      annotations(
+        title: "Continue Execution",
+        read_only_hint: false,
+        destructive_hint: false,
+        open_world_hint: false,
+      )
+
       input_schema(
         properties: {
           session_id: {

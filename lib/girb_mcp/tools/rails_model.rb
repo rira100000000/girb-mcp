@@ -11,6 +11,13 @@ module GirbMcp
                   "Omit model_name to list all model files in the application. " \
                   "Use this to understand a model's schema and relationships during debugging."
 
+      annotations(
+        title: "Rails Model Info",
+        read_only_hint: true,
+        destructive_hint: false,
+        open_world_hint: false,
+      )
+
       input_schema(
         properties: {
           model_name: {

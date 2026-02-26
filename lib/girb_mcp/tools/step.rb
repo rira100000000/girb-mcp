@@ -10,6 +10,13 @@ module GirbMcp
                   "Use 'finish' to run until the current method/block returns. " \
                   "If an exception is raised and rescued during the step, it will be reported automatically."
 
+      annotations(
+        title: "Step Into",
+        read_only_hint: false,
+        destructive_hint: false,
+        open_world_hint: false,
+      )
+
       input_schema(
         properties: {
           session_id: {

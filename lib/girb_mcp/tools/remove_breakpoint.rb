@@ -15,6 +15,13 @@ module GirbMcp
                   "as numbers can shift when breakpoints are deleted. " \
                   "Use 'get_context' to see current breakpoints."
 
+      annotations(
+        title: "Remove Breakpoint",
+        read_only_hint: false,
+        destructive_hint: false,
+        open_world_hint: false,
+      )
+
       input_schema(
         properties: {
           all: {

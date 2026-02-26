@@ -9,6 +9,13 @@ module GirbMcp
                   "Shows running Ruby processes started with 'rdbg --open' that can be " \
                   "connected to. Use this first to find sessions before calling 'connect'."
 
+      annotations(
+        title: "List Debug Sessions",
+        read_only_hint: true,
+        destructive_hint: false,
+        open_world_hint: false,
+      )
+
       input_schema(
         properties: {},
       )

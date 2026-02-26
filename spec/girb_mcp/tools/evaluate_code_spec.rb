@@ -216,6 +216,84 @@ RSpec.describe GirbMcp::Tools::EvaluateCode do
       end
     end
 
+    context "safety warnings" do
+      it "prepends warning for dangerous code" do
+        allow(client).to receive(:send_command).with(/\$__girb_err=nil; pp/).and_return("=> :ok")
+        allow(client).to receive(:send_command).with("p $__girb_err").and_return("=> nil")
+        allow(client).to receive(:send_command).with("$stdout = $__girb_old; p $__girb_cap.string").and_return('=> ""')
+        allow(client).to receive(:send_command).with("frame").and_return("#0 main at file.rb:1")
+
+        response = described_class.call(code: 'File.write("/tmp/x", "data")', server_context: server_context)
+        text = response_text(response)
+
+        expect(text).to include("WARNING:")
+        expect(text).to include("File system operations:")
+        expect(text).to include("The code was executed. Result follows:")
+        expect(text).to include(":ok")
+      end
+
+      it "does not prepend warning for safe code" do
+        allow(client).to receive(:send_command).with(/\$__girb_err=nil; pp/).and_return("=> 42")
+        allow(client).to receive(:send_command).with("p $__girb_err").and_return("=> nil")
+        allow(client).to receive(:send_command).with("$stdout = $__girb_old; p $__girb_cap.string").and_return('=> ""')
+        allow(client).to receive(:send_command).with("frame").and_return("#0 main at file.rb:1")
+
+        response = described_class.call(code: "user.name", server_context: server_context)
+        text = response_text(response)
+
+        expect(text).not_to include("WARNING:")
+        expect(text).not_to include("Result follows:")
+      end
+
+      it "prepends warning in trap context" do
+        client_in_trap = build_mock_client(trap_context: true)
+        manager_in_trap = build_mock_manager(client: client_in_trap)
+
+        allow(client_in_trap).to receive(:send_command).and_return("")
+        allow(client_in_trap).to receive(:send_command).with(/p\(begin/).and_return('=> :ok')
+
+        response = described_class.call(
+          code: 'system("ls")',
+          server_context: { session_manager: manager_in_trap },
+        )
+        text = response_text(response)
+
+        expect(text).to include("WARNING:")
+        expect(text).to include("System command execution:")
+        expect(text).to include("[trap context]")
+      end
+
+      it "includes execution result even when warning is present" do
+        allow(client).to receive(:send_command).with(/\$__girb_err=nil; pp/).and_return("=> true")
+        allow(client).to receive(:send_command).with("p $__girb_err").and_return("=> nil")
+        allow(client).to receive(:send_command).with("$stdout = $__girb_old; p $__girb_cap.string").and_return('=> ""')
+        allow(client).to receive(:send_command).with("frame").and_return("#0 main at file.rb:1")
+
+        response = described_class.call(code: "User.destroy_all", server_context: server_context)
+        text = response_text(response)
+
+        expect(text).to include("WARNING:")
+        expect(text).to include("Destructive data operations:")
+        expect(text).to include("true")
+      end
+
+      it "detects multiple dangerous categories" do
+        allow(client).to receive(:send_command).with(/\$__girb_err=nil; pp/).and_return("=> nil")
+        allow(client).to receive(:send_command).with("p $__girb_err").and_return("=> nil")
+        allow(client).to receive(:send_command).with("$stdout = $__girb_old; p $__girb_cap.string").and_return('=> ""')
+        allow(client).to receive(:send_command).with("frame").and_return("#0 main at file.rb:1")
+
+        response = described_class.call(
+          code: 'system("curl http://example.com"); File.write("/tmp/x", result)',
+          server_context: server_context,
+        )
+        text = response_text(response)
+
+        expect(text).to include("File system operations:")
+        expect(text).to include("System command execution:")
+      end
+    end
+
     context "ThreadError detection" do
       it "shows trap context guidance when ThreadError occurs in evaluation" do
         allow(client).to receive(:send_command).with(/\$__girb_err=nil; pp/).and_return("=> nil")

@@ -18,6 +18,13 @@ module GirbMcp
                   "Previous session breakpoints are NOT restored by default (use restore_breakpoints: true to restore). " \
                   "Note: stdout/stderr are NOT captured for connect sessions."
 
+      annotations(
+        title: "Connect to Debug Session",
+        read_only_hint: false,
+        destructive_hint: false,
+        open_world_hint: true,
+      )
+
       input_schema(
         properties: {
           path: {

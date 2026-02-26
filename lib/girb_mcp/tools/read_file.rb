@@ -11,6 +11,13 @@ module GirbMcp
                   "Use this to view code around a breakpoint or understand the surrounding logic. " \
                   "Relative paths are resolved against the debugged process's working directory."
 
+      annotations(
+        title: "Read Source File",
+        read_only_hint: true,
+        destructive_hint: false,
+        open_world_hint: false,
+      )
+
       input_schema(
         properties: {
           path: {

@@ -11,6 +11,13 @@ module GirbMcp
                   "Use 'Class#method' for instance methods, 'Class.method' for class methods, " \
                   "or 'Class' for class info including ancestors and method lists."
 
+      annotations(
+        title: "Get Source Code",
+        read_only_hint: true,
+        destructive_hint: false,
+        open_world_hint: false,
+      )
+
       input_schema(
         properties: {
           target: {

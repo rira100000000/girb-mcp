@@ -59,7 +59,7 @@ RSpec.describe GirbMcp::Tools::InspectObject do
           .and_return('=> ["Class", [:@table_name], [:@@count, :@@default_status]]')
         allow(client).to receive(:send_command)
           .with("pp Hash[(Order).class_variables.map{|v|" \
-                "[v,(Order).class_variable_get(v) rescue '(error)']}]")
+                "[v,begin;(Order).class_variable_get(v);rescue;'(error)';end]}]")
           .and_return('{:@@count=>42, :@@default_status=>:pending}')
 
         response = described_class.call(expression: "Order", server_context: server_context)
@@ -77,7 +77,7 @@ RSpec.describe GirbMcp::Tools::InspectObject do
           .and_return('=> ["Class", [:@table_name], [:@@count]]')
         allow(client).to receive(:send_command)
           .with("pp Hash[(Order).class_variables.map{|v|" \
-                "[v,(Order).class_variable_get(v) rescue '(error)']}]")
+                "[v,begin;(Order).class_variable_get(v);rescue;'(error)';end]}]")
           .and_raise(GirbMcp::TimeoutError, "timeout")
 
         response = described_class.call(expression: "Order", server_context: server_context)

@@ -133,6 +133,24 @@ module GirbMcp
 
       Note: rails_info, rails_routes, and rails_model may not work in trap context. \
       Use them after hitting a breakpoint via trigger_request.
+
+      Security — proper use of evaluate_code:
+      evaluate_code is designed EXCLUSIVELY for investigating the runtime state of the debugged \
+      process (inspecting variables, checking object state, testing expressions in context). \
+      It must NOT be used as a general-purpose code execution tool.
+
+      PROHIBITED uses of evaluate_code:
+      - File I/O: File.write, File.delete, FileUtils, IO.write \
+      → Use your agent's own file tools (Read, Write, Edit) instead
+      - System commands: system(), exec(), backtick, %x{}, Open3, spawn \
+      → Use your agent's own Bash/shell tool instead
+      - Network requests: Net::HTTP, open-uri, TCPSocket, HTTP client gems \
+      → Use your agent's own HTTP/network tools instead
+      - Process manipulation: Process.kill, fork, exit, abort
+      - Destructive data operations: destroy_all, delete_all, DROP/TRUNCATE SQL
+
+      IMPORTANT: If your agent's tools are restricted for a particular operation, \
+      you must NOT use evaluate_code to circumvent those restrictions.
     TEXT
 
     # Register Rails tools on an MCP server instance and notify connected clients.

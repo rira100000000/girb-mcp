@@ -2,6 +2,7 @@
 
 require "mcp"
 require "base64"
+require_relative "../code_safety_analyzer"
 
 module GirbMcp
   module Tools
@@ -12,6 +13,14 @@ module GirbMcp
                   "stdout output (from puts, print, etc.) is automatically captured and returned " \
                   "(suppressed when it duplicates the return value). " \
                   "Example: evaluate_code(code: \"user.errors.full_messages\")"
+
+      annotations(
+        title: "Evaluate Ruby Code",
+        read_only_hint: false,
+        destructive_hint: true,
+        idempotent_hint: false,
+        open_world_hint: true,
+      )
 
       input_schema(
         properties: {
@@ -32,11 +41,15 @@ module GirbMcp
           client = server_context[:session_manager].client(session_id)
           client.auto_repause!
 
+          # Layer 3: Code safety analysis — warn about dangerous operations
+          safety_warnings = CodeSafetyAnalyzer.analyze(code)
+          warning_text = CodeSafetyAnalyzer.format_warnings(safety_warnings)
+
           # In trap context (e.g., after SIGURG-based repause), `require` and
           # Mutex operations hang. Use a simplified evaluation path that avoids
           # stdout redirect (which needs `require "stringio"`).
           if client.trap_context
-            return call_in_trap_context(client, code)
+            return call_in_trap_context(client, code, warning_text: warning_text)
           end
 
           stdout_redirected = false
@@ -97,6 +110,7 @@ module GirbMcp
             end
             text = append_frame_info(client, text)
             text = append_trap_context_note(client, text)
+            text = prepend_warning(text, warning_text)
             MCP::Tool::Response.new([{ type: "text", text: text }])
           rescue GirbMcp::TimeoutError => e
             MCP::Tool::Response.new([{ type: "text", text: "Error: #{e.message}\n\n" \
@@ -123,7 +137,7 @@ module GirbMcp
         # Simplified evaluation path for trap context (after SIGURG-based repause).
         # Avoids `require`, Mutex, and stdout redirect — all of which hang in trap context.
         # Only uses simple expressions that are safe in restricted context.
-        def call_in_trap_context(client, code)
+        def call_in_trap_context(client, code, warning_text: nil)
           # Use `p` instead of `pp` (pp may trigger autoload in some cases)
           # Single-line code only; multi-line code with newlines can't use Base64 (require hangs)
           if code.include?("\n")
@@ -140,6 +154,7 @@ module GirbMcp
 
           text = output
           text = append_trap_context_note(client, text)
+          text = prepend_warning(text, warning_text)
           MCP::Tool::Response.new([{ type: "text", text: text }])
         rescue GirbMcp::TimeoutError => e
           MCP::Tool::Response.new([{ type: "text", text: "Error: #{e.message}\n\n" \
@@ -229,6 +244,13 @@ module GirbMcp
           text
         rescue GirbMcp::Error
           text
+        end
+
+        # Prepend safety warning to response text if present.
+        def prepend_warning(text, warning_text)
+          return text unless warning_text
+
+          "#{warning_text}\n\nThe code was executed. Result follows:\n---\n#{text}"
         end
 
         def append_trap_context_note(client, text)

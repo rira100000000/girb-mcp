@@ -13,6 +13,13 @@ module GirbMcp
                   "Use 'finish' to exit the current block/method entirely. " \
                   "If an exception is raised and rescued during the step, it will be reported automatically."
 
+      annotations(
+        title: "Step Over",
+        read_only_hint: false,
+        destructive_hint: false,
+        open_world_hint: false,
+      )
+
       input_schema(
         properties: {
           session_id: {

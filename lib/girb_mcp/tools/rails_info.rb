@@ -12,6 +12,13 @@ module GirbMcp
                   "when available (these require escaping trap context first on Puma/threaded servers). " \
                   "Use this after connecting to a Rails process to quickly understand the application."
 
+      annotations(
+        title: "Rails App Info",
+        read_only_hint: true,
+        destructive_hint: false,
+        open_world_hint: false,
+      )
+
       input_schema(
         properties: {
           session_id: {

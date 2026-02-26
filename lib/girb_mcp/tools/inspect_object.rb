@@ -9,6 +9,13 @@ module GirbMcp
                   "Returns the value, class, and instance variables. " \
                   "More detailed than evaluate_code — use this to understand an object's internal state."
 
+      annotations(
+        title: "Inspect Object",
+        read_only_hint: true,
+        destructive_hint: false,
+        open_world_hint: false,
+      )
+
       input_schema(
         properties: {
           expression: {
@@ -49,7 +56,7 @@ module GirbMcp
               begin
                 cvar_values = client.send_command(
                   "pp Hash[(#{expression}).class_variables.map{|v|" \
-                  "[v,(#{expression}).class_variable_get(v) rescue '(error)']}]",
+                  "[v,begin;(#{expression}).class_variable_get(v);rescue;'(error)';end]}]",
                 )
                 parts << "Class variables:\n#{cvar_values}"
               rescue GirbMcp::TimeoutError

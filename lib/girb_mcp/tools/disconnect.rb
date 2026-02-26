@@ -10,6 +10,13 @@ module GirbMcp
                   "Use this when you are done debugging or want to restart with a clean state. " \
                   "After disconnecting, use 'run_script' or 'connect' to start a new session."
 
+      annotations(
+        title: "Disconnect Session",
+        read_only_hint: false,
+        destructive_hint: false,
+        open_world_hint: false,
+      )
+
       input_schema(
         properties: {
           session_id: {

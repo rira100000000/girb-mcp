@@ -13,6 +13,13 @@ module GirbMcp
                   "This is the easiest way to start debugging a script from scratch. " \
                   "Use restore_breakpoints: true to re-run with the same breakpoints after a crash."
 
+      annotations(
+        title: "Run Ruby Script",
+        read_only_hint: false,
+        destructive_hint: false,
+        open_world_hint: true,
+      )
+
       input_schema(
         properties: {
           file: {

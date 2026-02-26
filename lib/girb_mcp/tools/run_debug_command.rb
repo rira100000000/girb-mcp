@@ -10,6 +10,13 @@ module GirbMcp
                   "'info threads', 'watch @name'. " \
                   "Note: For catching exceptions, prefer set_breakpoint(exception_class: 'NoMethodError') instead."
 
+      annotations(
+        title: "Run Debug Command",
+        read_only_hint: false,
+        destructive_hint: false,
+        open_world_hint: false,
+      )
+
       input_schema(
         properties: {
           command: {

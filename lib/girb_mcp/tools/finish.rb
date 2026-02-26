@@ -13,6 +13,13 @@ module GirbMcp
                   "To skip to just the NEXT ITERATION instead, use set_breakpoint with one_shot: true " \
                   "on the first line of the block body, then continue_execution."
 
+      annotations(
+        title: "Finish Method/Block",
+        read_only_hint: false,
+        destructive_hint: false,
+        open_world_hint: false,
+      )
+
       input_schema(
         properties: {
           session_id: {

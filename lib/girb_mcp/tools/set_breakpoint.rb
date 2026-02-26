@@ -16,6 +16,13 @@ module GirbMcp
                   "3. Exception breakpoint: provide exception_class (e.g., 'NoMethodError') to pause " \
                   "when that exception is raised, BEFORE it crashes the process."
 
+      annotations(
+        title: "Set Breakpoint",
+        read_only_hint: false,
+        destructive_hint: false,
+        open_world_hint: false,
+      )
+
       input_schema(
         properties: {
           file: {

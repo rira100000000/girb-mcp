@@ -11,6 +11,13 @@ module GirbMcp
                   "Can filter by controller name or path pattern. " \
                   "Works in trap context (lightweight mode)."
 
+      annotations(
+        title: "Rails Routes",
+        read_only_hint: true,
+        destructive_hint: false,
+        open_world_hint: false,
+      )
+
       input_schema(
         properties: {
           controller: {

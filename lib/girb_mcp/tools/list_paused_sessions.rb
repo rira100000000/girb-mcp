@@ -8,6 +8,13 @@ module GirbMcp
       description "[Discovery] List all active debug sessions managed by girb-mcp. " \
                   "Shows connected sessions, their PIDs, and idle time."
 
+      annotations(
+        title: "List Active Sessions",
+        read_only_hint: true,
+        destructive_hint: false,
+        open_world_hint: false,
+      )
+
       input_schema(
         properties: {},
       )
