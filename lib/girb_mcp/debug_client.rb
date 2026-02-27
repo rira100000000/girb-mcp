@@ -16,7 +16,7 @@ module GirbMcp
     # ANSI escape code pattern
     ANSI_ESCAPE = /\e\[[0-9;]*m/
 
-    attr_reader :pid, :connected, :paused, :trap_context, :remote
+    attr_reader :pid, :connected, :paused, :trap_context, :remote, :port
     attr_accessor :stderr_file, :stdout_file, :wait_thread, :script_file, :script_args, :pending_http,
       :listen_ports, :escape_target
 
@@ -27,6 +27,7 @@ module GirbMcp
       @paused = false
       @trap_context = nil
       @remote = false # True for TCP connections (e.g., Docker) where Process.kill won't work
+      @port = nil
       @width = DEFAULT_WIDTH
       @mutex = Mutex.new
       @one_shot_breakpoints = Set.new
@@ -54,6 +55,7 @@ module GirbMcp
       elsif port
         @socket = Socket.tcp(host || "localhost", port.to_i)
         @remote = true
+        @port = port.to_i
       else
         path = discover_socket
         @socket = Socket.unix(path)
@@ -107,6 +109,7 @@ module GirbMcp
       @connected = false
       @paused = false
       @trap_context = nil
+      @port = nil
       @pending_http = nil
       @listen_ports = []
       @escape_target = nil

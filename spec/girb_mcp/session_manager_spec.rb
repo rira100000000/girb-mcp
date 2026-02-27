@@ -121,6 +121,56 @@ RSpec.describe GirbMcp::SessionManager do
       expect(other_client).not_to have_received(:disconnect)
       expect(sessions).to have_key("session_300")
     end
+
+    it "disconnects existing session with the same port before connecting" do
+      old_client = build_mock_client(pid: "100", port: 12345, remote: true)
+      sessions = manager.instance_variable_get(:@sessions)
+      sessions["session_100"] = GirbMcp::SessionManager::SessionInfo.new(
+        client: old_client, connected_at: Time.now, last_activity_at: Time.now,
+      )
+
+      new_client = build_mock_client(pid: "200", port: 12345, remote: true)
+      allow(GirbMcp::DebugClient).to receive(:new).and_return(new_client)
+      allow(new_client).to receive(:connect).and_return({ success: true, pid: "200", output: "ok" })
+
+      manager.connect(pre_cleanup_port: 12345)
+
+      expect(old_client).to have_received(:disconnect)
+      expect(sessions).not_to have_key("session_100")
+    end
+
+    it "does not affect sessions with different ports" do
+      other_client = build_mock_client(pid: "300", port: 54321, remote: true)
+      sessions = manager.instance_variable_get(:@sessions)
+      sessions["session_300"] = GirbMcp::SessionManager::SessionInfo.new(
+        client: other_client, connected_at: Time.now, last_activity_at: Time.now,
+      )
+
+      new_client = build_mock_client(pid: "400")
+      allow(GirbMcp::DebugClient).to receive(:new).and_return(new_client)
+      allow(new_client).to receive(:connect).and_return({ success: true, pid: "400", output: "ok" })
+
+      manager.connect(pre_cleanup_port: 12345)
+
+      expect(other_client).not_to have_received(:disconnect)
+      expect(sessions).to have_key("session_300")
+    end
+
+    it "does not affect sessions with nil port" do
+      other_client = build_mock_client(pid: "300")
+      sessions = manager.instance_variable_get(:@sessions)
+      sessions["session_300"] = GirbMcp::SessionManager::SessionInfo.new(
+        client: other_client, connected_at: Time.now, last_activity_at: Time.now,
+      )
+
+      new_client = build_mock_client(pid: "400")
+      allow(GirbMcp::DebugClient).to receive(:new).and_return(new_client)
+      allow(new_client).to receive(:connect).and_return({ success: true, pid: "400", output: "ok" })
+
+      manager.connect(pre_cleanup_port: 12345)
+
+      expect(other_client).not_to have_received(:disconnect)
+    end
   end
 
   describe "#connect (reconnect cleanup)" do

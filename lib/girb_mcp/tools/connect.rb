@@ -83,6 +83,7 @@ module GirbMcp
             port: port,
             connect_timeout: connect_timeout,
             pre_cleanup_pid: pre_target_pid,
+            pre_cleanup_port: port,
           ) {
             if pre_listen_ports.any?
               woke = true
@@ -102,6 +103,11 @@ module GirbMcp
 
           # Detect listen ports (useful for trigger_request URL)
           listen_ports = detect_listen_ports(result[:pid])
+          # Docker/TCP: /proc-based detection fails due to PID namespace mismatch.
+          # Fall back to Docker inspect to find web server port mappings.
+          if listen_ports.empty? && client.remote && port
+            listen_ports = TcpSessionDiscovery.container_web_ports(port)
+          end
           if listen_ports.any?
             port_list = listen_ports.map { |p| "http://127.0.0.1:#{p}" }.join(", ")
             text += "  Listening on: #{port_list}\n"

@@ -30,11 +30,11 @@ module GirbMcp
     # Accepts an optional block that is passed through to DebugClient#connect
     # as the on_initial_timeout callback (used to wake IO-blocked processes).
     def connect(session_id: nil, path: nil, host: nil, port: nil,
-                connect_timeout: nil, pre_cleanup_pid: nil, &on_initial_timeout)
-      # Pre-cleanup: disconnect existing sessions for the same PID/session_id
+                connect_timeout: nil, pre_cleanup_pid: nil, pre_cleanup_port: nil, &on_initial_timeout)
+      # Pre-cleanup: disconnect existing sessions for the same PID/session_id/port
       # BEFORE establishing a new connection. The old session's socket occupies
       # the debug gem, so the new connect() would timeout if not cleaned up first.
-      pre_cleanup(session_id: session_id, pid: pre_cleanup_pid)
+      pre_cleanup(session_id: session_id, pid: pre_cleanup_pid, port: pre_cleanup_port)
 
       client = DebugClient.new
       result = client.connect(path: path, host: host, port: port,
@@ -248,7 +248,7 @@ module GirbMcp
 
     private
 
-    def pre_cleanup(session_id:, pid:)
+    def pre_cleanup(session_id:, pid:, port: nil)
       @mutex.synchronize do
         if session_id
           info = @sessions.delete(session_id)
@@ -258,6 +258,16 @@ module GirbMcp
           pid_str = pid.to_s
           sids = @sessions.each_with_object([]) do |(sid, info), acc|
             acc << sid if info.client.pid.to_s == pid_str
+          end
+          sids.each do |sid|
+            info = @sessions.delete(sid)
+            info&.client&.disconnect rescue nil
+          end
+        end
+        if port
+          port_int = port.to_i
+          sids = @sessions.each_with_object([]) do |(sid, info), acc|
+            acc << sid if info.client.port == port_int
           end
           sids.each do |sid|
             info = @sessions.delete(sid)
