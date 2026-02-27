@@ -125,6 +125,98 @@ RSpec.describe GirbMcp::Tools::ReadFile do
         expect(client).not_to have_received(:send_command).with("p Dir.pwd")
       end
     end
+
+    context "remote file reading (Docker/TCP)" do
+      let(:remote_client) { build_mock_client(remote: true) }
+      let(:remote_manager) { build_mock_manager(client: remote_client) }
+      let(:remote_context) { { session_manager: remote_manager } }
+
+      it "reads file via debug session for remote connections" do
+        allow(remote_client).to receive(:send_command)
+          .with("p File.exist?(\"/app/test.rb\")")
+          .and_return('=> "true"')
+        allow(remote_client).to receive(:send_command)
+          .with("p File.readlines(\"/app/test.rb\").size")
+          .and_return("=> 3")
+        allow(remote_client).to receive(:send_command)
+          .with("p File.readlines(\"/app/test.rb\")[0..2].join")
+          .and_return("=> \"line 1\\nline 2\\nline 3\\n\"")
+
+        response = described_class.call(path: "/app/test.rb", server_context: remote_context)
+        text = response_text(response)
+
+        expect(text).to include("[remote]")
+        expect(text).to include("3 lines")
+        expect(text).to include("1: line 1")
+        expect(text).to include("3: line 3")
+      end
+
+      it "returns error when remote file not found" do
+        allow(remote_client).to receive(:send_command)
+          .with("p File.exist?(\"/app/missing.rb\")")
+          .and_return('=> "false"')
+
+        response = described_class.call(path: "/app/missing.rb", server_context: remote_context)
+        text = response_text(response)
+
+        expect(text).to include("Error: File not found on remote process")
+        expect(text).to include("/app/missing.rb")
+      end
+
+      it "reads specific line range from remote file" do
+        allow(remote_client).to receive(:send_command)
+          .with("p File.exist?(\"/app/test.rb\")")
+          .and_return('=> "true"')
+        allow(remote_client).to receive(:send_command)
+          .with("p File.readlines(\"/app/test.rb\").size")
+          .and_return("=> 10")
+        allow(remote_client).to receive(:send_command)
+          .with("p File.readlines(\"/app/test.rb\")[2..4].join")
+          .and_return("=> \"line 3\\nline 4\\nline 5\\n\"")
+
+        response = described_class.call(
+          path: "/app/test.rb",
+          start_line: 3,
+          end_line: 5,
+          server_context: remote_context,
+        )
+        text = response_text(response)
+
+        expect(text).to include("[remote]")
+        expect(text).to include("lines 3-5 of 10")
+        expect(text).to include("3: line 3")
+        expect(text).to include("5: line 5")
+      end
+
+      it "resolves relative paths via remote cwd" do
+        allow(remote_client).to receive(:send_command)
+          .with("p Dir.pwd")
+          .and_return('=> "/app"')
+        allow(remote_client).to receive(:send_command)
+          .with("p File.exist?(\"/app/config/routes.rb\")")
+          .and_return('=> "true"')
+        allow(remote_client).to receive(:send_command)
+          .with("p File.readlines(\"/app/config/routes.rb\").size")
+          .and_return("=> 1")
+        allow(remote_client).to receive(:send_command)
+          .with("p File.readlines(\"/app/config/routes.rb\")[0..0].join")
+          .and_return("=> \"routes\\n\"")
+
+        response = described_class.call(path: "config/routes.rb", server_context: remote_context)
+        text = response_text(response)
+
+        expect(text).to include("[remote]")
+        expect(text).to include("/app/config/routes.rb")
+      end
+
+      it "falls back to local reading for non-remote connections" do
+        response = described_class.call(path: tmpfile.path, server_context: server_context)
+        text = response_text(response)
+
+        expect(text).not_to include("[remote]")
+        expect(text).to include("10 lines")
+      end
+    end
   end
 
   describe "MAX_LINES" do
