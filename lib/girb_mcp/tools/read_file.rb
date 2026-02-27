@@ -147,8 +147,20 @@ module GirbMcp
           lines = content_raw.lines
           content = lines.map.with_index(start_idx + 1) { |line, num| "#{num}: #{line}" }.join
 
+          # Detect partial fetch (chunk returned nil before all lines were retrieved)
+          actual_end = start_idx + lines.length - 1
+          partial = actual_end < end_idx
+
           if start_line || end_line
-            header = "#{full_path} (lines #{start_idx + 1}-#{end_idx + 1} of #{total_lines}) [remote]"
+            if partial
+              header = "#{full_path} (lines #{start_idx + 1}-#{actual_end + 1} of #{total_lines}, " \
+                       "partial: fetch failed after line #{actual_end + 1}) [remote]"
+            else
+              header = "#{full_path} (lines #{start_idx + 1}-#{end_idx + 1} of #{total_lines}) [remote]"
+            end
+          elsif partial
+            header = "#{full_path} (lines 1-#{actual_end + 1} of #{total_lines}, " \
+                     "partial: fetch failed after line #{actual_end + 1}) [remote]"
           elsif total_lines > MAX_LINES
             header = "#{full_path} (lines 1-#{MAX_LINES} of #{total_lines}, truncated) [remote]"
           else

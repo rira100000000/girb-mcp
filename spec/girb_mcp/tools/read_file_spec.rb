@@ -266,10 +266,11 @@ RSpec.describe GirbMcp::Tools::ReadFile do
         response = described_class.call(path: "/app/partial.rb", server_context: remote_context)
         text = response_text(response)
 
-        # Should return the 50 lines from the first chunk
+        # Should return the 50 lines from the first chunk with partial warning
         expect(text).to include("1: line 1")
         expect(text).to include("50: line 50")
         expect(text).not_to include("51: line 51")
+        expect(text).to include("partial: fetch failed after line 50")
       end
 
       it "falls back to local reading for non-remote connections" do
