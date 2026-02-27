@@ -31,6 +31,25 @@ module GirbMcp
                     "Tip: To stop BEFORE execution, set the breakpoint on the first line inside the block. " \
                     "To stop only once, use one_shot: true, or set the breakpoint on the line where " \
                     "the block method is called (e.g., the .map line).",
+      "call" => "WARNING - Stop event (call): The debug gem assigned this breakpoint to a method entry event " \
+                "instead of a line event. This typically happens when the breakpoint line is a method " \
+                "definition (e.g., 'def foo' or 'class Foo').\n" \
+                "  - It fires when the method/class is entered, which may not match your expectation\n" \
+                "Tip: Set the breakpoint on a line inside the method body instead.",
+      "b_call" => "WARNING - Stop event (b_call): The debug gem assigned this breakpoint to a block entry event " \
+                  "instead of a line event. This typically happens when the breakpoint line is a block " \
+                  "definition (e.g., 'do ... end' or '{ ... }').\n" \
+                  "  - It fires when the block is entered (stops on EVERY iteration)\n" \
+                  "Tip: Set the breakpoint on the first line inside the block body instead. " \
+                  "Use one_shot: true to stop only once.",
+      "c_call" => "WARNING - Stop event (c_call): The debug gem assigned this breakpoint to a C method entry event. " \
+                  "This means the line maps to a native C method call, not a Ruby line.\n" \
+                  "  - Behavior may be unexpected since C methods don't have Ruby source lines\n" \
+                  "Tip: Set the breakpoint on a different line that contains Ruby code.",
+      "c_return" => "WARNING - Stop event (c_return): The debug gem assigned this breakpoint to a C method return event. " \
+                    "This means the line maps to a native C method return.\n" \
+                    "  - The C method has ALREADY finished executing when the breakpoint hits\n" \
+                    "Tip: Set the breakpoint on a different line that contains Ruby code.",
     }.freeze
 
     BREAKPOINT_HIT_NOTES = {

@@ -74,6 +74,15 @@ RSpec.describe GirbMcp::Tools::SetBreakpoint do
         text = response_text(response)
         expect(text).to include("WARNING")
       end
+
+      it "annotates call event warning for class/def lines" do
+        allow(client).to receive(:send_command).and_return("#1  BP - Line  f.rb:1 (call)")
+
+        response = described_class.call(file: "f.rb", line: 1, server_context: server_context)
+        text = response_text(response)
+        expect(text).to include("WARNING - Stop event (call)")
+        expect(text).to include("method entry event")
+      end
     end
 
     context "method breakpoint" do

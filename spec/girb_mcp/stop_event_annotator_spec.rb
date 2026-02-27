@@ -61,6 +61,34 @@ RSpec.describe GirbMcp::StopEventAnnotator do
       expect(result).to include("fires AFTER each block iteration returns")
     end
 
+    it "adds warning for call event" do
+      output = "#1  BP - Line  /path:1 (call)"
+      result = described_class.annotate_breakpoint_set(output)
+      expect(result).to include("WARNING - Stop event (call)")
+      expect(result).to include("method entry event")
+    end
+
+    it "adds warning for b_call event" do
+      output = "#1  BP - Line  /path:5 (b_call)"
+      result = described_class.annotate_breakpoint_set(output)
+      expect(result).to include("WARNING - Stop event (b_call)")
+      expect(result).to include("block entry event")
+    end
+
+    it "adds warning for c_call event" do
+      output = "#1  BP - Line  /path:3 (c_call)"
+      result = described_class.annotate_breakpoint_set(output)
+      expect(result).to include("WARNING - Stop event (c_call)")
+      expect(result).to include("C method entry event")
+    end
+
+    it "adds warning for c_return event" do
+      output = "#1  BP - Line  /path:3 (c_return)"
+      result = described_class.annotate_breakpoint_set(output)
+      expect(result).to include("WARNING - Stop event (c_return)")
+      expect(result).to include("C method return event")
+    end
+
     it "returns nil for nil output" do
       expect(described_class.annotate_breakpoint_set(nil)).to be_nil
     end
