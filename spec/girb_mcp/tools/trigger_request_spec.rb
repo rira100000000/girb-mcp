@@ -834,4 +834,10 @@ RSpec.describe GirbMcp::Tools::TriggerRequest do
       expect(GirbMcp::Tools::TriggerRequest::DEFAULT_TIMEOUT).to eq(30)
     end
   end
+
+  describe "HTTP_BREAKPOINT_TIMEOUT" do
+    it "is 300 (5 minutes) to survive investigation at breakpoints" do
+      expect(GirbMcp::Tools::TriggerRequest::HTTP_BREAKPOINT_TIMEOUT).to eq(300)
+    end
+  end
 end

@@ -10,6 +10,7 @@ module GirbMcp
   module Tools
     class TriggerRequest < MCP::Tool
       DEFAULT_TIMEOUT = 30
+      HTTP_BREAKPOINT_TIMEOUT = 300
       HTTP_JOIN_TIMEOUT = 5
 
       description "[Entry Point] Send an HTTP request to a Rails app running under the debugger. " \
@@ -137,8 +138,10 @@ module GirbMcp
           http_holder = { response: nil, error: nil, done: false }
 
           if client.paused
-            # Start HTTP request in a background thread (concurrent with continue)
-            http_thread = start_http_thread(method, url, headers, body, timeout, http_holder)
+            # Start HTTP request in a background thread (concurrent with continue).
+            # Use a long HTTP timeout so the request survives while the user
+            # investigates at a breakpoint (the BP wait timeout is separate).
+            http_thread = start_http_thread(method, url, headers, body, HTTP_BREAKPOINT_TIMEOUT, http_holder)
 
             pending_output = client.ensure_paused(timeout: 2)
 
@@ -153,7 +156,7 @@ module GirbMcp
           else
             # Process is running (e.g., after continue_execution timeout).
             # Start HTTP request, then wait for the breakpoint to be hit.
-            http_thread = start_http_thread(method, url, headers, body, timeout, http_holder)
+            http_thread = start_http_thread(method, url, headers, body, HTTP_BREAKPOINT_TIMEOUT, http_holder)
             result = client.wait_for_breakpoint(timeout: timeout) { http_holder[:done] }
           end
 
