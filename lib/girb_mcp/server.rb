@@ -151,6 +151,21 @@ module GirbMcp
 
       IMPORTANT: If your agent's tools are restricted for a particular operation, \
       you must NOT use evaluate_code to circumvent those restrictions.
+
+      Quick tool selection guide:
+      - "Where am I? What are the variables and breakpoints?" → get_context
+      - "Execute a Ruby expression or test a fix" → evaluate_code
+      - "See an object's full structure (class, ivars, value)" → inspect_object
+      - "Read the source of a method or class" → get_source
+      - "Read a file from the debugged process's machine" → read_file
+      - "Step to the next line (stay in current method)" → next
+      - "Step into a method call" → step
+      - "Run until current method/block returns" → finish
+      - "Resume until next breakpoint" → continue_execution
+      - "Send an HTTP request and wait for breakpoint" → trigger_request
+
+      Typical pattern for Rails debugging:
+      set_breakpoint → trigger_request → get_context → evaluate_code → continue_execution
     TEXT
 
     # Register Rails tools on an MCP server instance and notify connected clients.
