@@ -1,5 +1,7 @@
 # frozen_string_literal: true
 
+require "set"
+
 module GirbMcp
   class SessionManager
     # Default session timeout: 30 minutes of inactivity
@@ -9,7 +11,7 @@ module GirbMcp
     # How long to remember reaped sessions for diagnostic messages
     RECENTLY_REAPED_TTL = 10 * 60
 
-    SessionInfo = Struct.new(:client, :connected_at, :last_activity_at, keyword_init: true)
+    SessionInfo = Struct.new(:client, :connected_at, :last_activity_at, :acknowledged_warnings, keyword_init: true)
 
     attr_reader :timeout
 
@@ -66,6 +68,7 @@ module GirbMcp
           client: client,
           connected_at: now,
           last_activity_at: now,
+          acknowledged_warnings: Set.new,
         )
         @default_session_id = sid
       end
@@ -192,6 +195,24 @@ module GirbMcp
         { spec: spec, output: output.lines.first&.strip }
       rescue GirbMcp::Error => e
         { spec: spec, error: e.message }
+      end
+    end
+
+    # Acknowledge a warning category for a session (suppresses future warnings of this category).
+    def acknowledge_warning(session_id, category)
+      @mutex.synchronize do
+        sid = session_id || @default_session_id
+        info = @sessions[sid]
+        info&.acknowledged_warnings&.add(category)
+      end
+    end
+
+    # Get the set of acknowledged warning categories for a session.
+    def acknowledged_warnings(session_id = nil)
+      @mutex.synchronize do
+        sid = session_id || @default_session_id
+        info = @sessions[sid]
+        info&.acknowledged_warnings || Set.new
       end
     end
 

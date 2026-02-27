@@ -58,6 +58,13 @@ module GirbMcp
       ],
     }.freeze
 
+    # Filter out warnings whose categories have been acknowledged.
+    def self.filter_acknowledged(warnings, acknowledged_categories)
+      return warnings if acknowledged_categories.nil? || acknowledged_categories.empty?
+
+      warnings.reject { |w| acknowledged_categories.include?(w[:category]) }
+    end
+
     # Analyze code for dangerous patterns.
     # Returns an array of warnings: [{ category:, label:, matches: }]
     def self.analyze(code)

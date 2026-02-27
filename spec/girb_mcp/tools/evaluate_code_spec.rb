@@ -294,6 +294,51 @@ RSpec.describe GirbMcp::Tools::EvaluateCode do
       end
     end
 
+    context "acknowledge_mutations" do
+      before do
+        allow(client).to receive(:send_command).with(/\$__girb_err=nil; pp/).and_return("=> true")
+        allow(client).to receive(:send_command).with("p $__girb_err").and_return("=> nil")
+        allow(client).to receive(:send_command).with("$stdout = $__girb_old; p $__girb_cap.string").and_return('=> ""')
+        allow(client).to receive(:send_command).with("frame").and_return("#0 main at file.rb:1")
+      end
+
+      it "suppresses mutation warnings when acknowledge_mutations is true" do
+        allow(manager).to receive(:acknowledged_warnings).and_return(Set[:mutation_operations])
+
+        response = described_class.call(
+          code: "user.save!", acknowledge_mutations: true, server_context: server_context,
+        )
+        text = response_text(response)
+
+        expect(manager).to have_received(:acknowledge_warning).with(nil, :mutation_operations)
+        expect(text).not_to include("WARNING:")
+        expect(text).not_to include("Data mutation")
+      end
+
+      it "still shows non-mutation warnings even when mutations are acknowledged" do
+        allow(manager).to receive(:acknowledged_warnings).and_return(Set[:mutation_operations])
+
+        response = described_class.call(
+          code: 'system("ls"); user.save!', acknowledge_mutations: true, server_context: server_context,
+        )
+        text = response_text(response)
+
+        expect(text).to include("WARNING:")
+        expect(text).to include("System command execution")
+        expect(text).not_to include("Data mutation")
+      end
+
+      it "shows mutation warnings when not acknowledged" do
+        response = described_class.call(
+          code: "user.save!", server_context: server_context,
+        )
+        text = response_text(response)
+
+        expect(text).to include("WARNING:")
+        expect(text).to include("Data mutation")
+      end
+    end
+
     context "ThreadError detection" do
       it "shows trap context guidance when ThreadError occurs in evaluation" do
         allow(client).to receive(:send_command).with(/\$__girb_err=nil; pp/).and_return("=> nil")

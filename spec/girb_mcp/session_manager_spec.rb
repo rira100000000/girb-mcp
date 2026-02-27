@@ -390,6 +390,40 @@ RSpec.describe GirbMcp::SessionManager do
     end
   end
 
+  describe "#acknowledge_warning / #acknowledged_warnings" do
+    it "records acknowledged warning categories for a session" do
+      client = build_mock_client(connected: true, pid: "777")
+      sessions = manager.instance_variable_get(:@sessions)
+      sessions["sess_777"] = GirbMcp::SessionManager::SessionInfo.new(
+        client: client, connected_at: Time.now, last_activity_at: Time.now,
+        acknowledged_warnings: Set.new,
+      )
+
+      manager.acknowledge_warning("sess_777", :mutation_operations)
+      ack = manager.acknowledged_warnings("sess_777")
+
+      expect(ack).to include(:mutation_operations)
+    end
+
+    it "returns empty set for unknown session" do
+      expect(manager.acknowledged_warnings("nonexistent")).to eq(Set.new)
+    end
+
+    it "clears acknowledged warnings on disconnect" do
+      client = build_mock_client(connected: true, pid: "778")
+      sessions = manager.instance_variable_get(:@sessions)
+      sessions["sess_778"] = GirbMcp::SessionManager::SessionInfo.new(
+        client: client, connected_at: Time.now, last_activity_at: Time.now,
+        acknowledged_warnings: Set.new,
+      )
+
+      manager.acknowledge_warning("sess_778", :mutation_operations)
+      manager.disconnect("sess_778")
+
+      expect(manager.acknowledged_warnings("sess_778")).to eq(Set.new)
+    end
+  end
+
   describe "recently_reaped tracking" do
     it "records reaped sessions in reap_stale_sessions" do
       client = build_mock_client(connected: true, pid: "555")

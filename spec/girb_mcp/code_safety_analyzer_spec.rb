@@ -312,4 +312,27 @@ RSpec.describe GirbMcp::CodeSafetyAnalyzer do
       expect(result).to include("File.write/delete/unlink/rename, FileUtils")
     end
   end
+
+  describe ".filter_acknowledged" do
+    it "removes acknowledged categories" do
+      warnings = [
+        { category: :mutation_operations, matches: [".save!"] },
+        { category: :file_operations, matches: ["File.write/delete/unlink/rename"] },
+      ]
+      filtered = described_class.filter_acknowledged(warnings, Set[:mutation_operations])
+
+      expect(filtered.size).to eq(1)
+      expect(filtered.first[:category]).to eq(:file_operations)
+    end
+
+    it "returns all warnings when nothing is acknowledged" do
+      warnings = [{ category: :mutation_operations, matches: [".save!"] }]
+      expect(described_class.filter_acknowledged(warnings, Set.new)).to eq(warnings)
+    end
+
+    it "returns all warnings when acknowledged_categories is nil" do
+      warnings = [{ category: :mutation_operations, matches: [".save!"] }]
+      expect(described_class.filter_acknowledged(warnings, nil)).to eq(warnings)
+    end
+  end
 end

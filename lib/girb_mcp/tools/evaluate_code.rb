@@ -33,17 +33,30 @@ module GirbMcp
             type: "string",
             description: "Debug session ID (uses default session if omitted)",
           },
+          acknowledge_mutations: {
+            type: "boolean",
+            description: "Set to true to suppress data mutation warnings (e.g., .save, .create!) " \
+                         "for the rest of this session. Other warning categories are unaffected.",
+          },
         },
         required: ["code"],
       )
 
       class << self
-        def call(code:, session_id: nil, server_context:)
-          client = server_context[:session_manager].client(session_id)
+        def call(code:, session_id: nil, acknowledge_mutations: nil, server_context:)
+          manager = server_context[:session_manager]
+          client = manager.client(session_id)
           client.auto_repause!
+
+          # Acknowledge mutation warnings for this session if requested
+          if acknowledge_mutations
+            manager.acknowledge_warning(session_id, :mutation_operations)
+          end
 
           # Layer 3: Code safety analysis — warn about dangerous operations
           safety_warnings = CodeSafetyAnalyzer.analyze(code)
+          acknowledged = manager.acknowledged_warnings(session_id)
+          safety_warnings = CodeSafetyAnalyzer.filter_acknowledged(safety_warnings, acknowledged)
           warning_text = CodeSafetyAnalyzer.format_warnings(safety_warnings)
 
           # In trap context (e.g., after SIGURG-based repause), `require` and

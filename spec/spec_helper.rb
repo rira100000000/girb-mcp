@@ -1,5 +1,6 @@
 # frozen_string_literal: true
 
+require "set"
 require "girb_mcp"
 
 RSpec.configure do |config|
@@ -73,6 +74,8 @@ def build_mock_manager(client: nil)
   allow(manager).to receive(:active_sessions).with(any_args).and_return([])
   allow(manager).to receive(:disconnect)
   allow(manager).to receive(:timeout).and_return(1800)
+  allow(manager).to receive(:acknowledge_warning)
+  allow(manager).to receive(:acknowledged_warnings).and_return(Set.new)
   allow(manager).to receive(:connect).and_return({
     success: true, pid: "12345", output: "stopped at line 1", session_id: "session_12345",
   })
