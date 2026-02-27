@@ -209,6 +209,69 @@ RSpec.describe GirbMcp::Tools::ReadFile do
         expect(text).to include("/app/config/routes.rb")
       end
 
+      it "returns error when line count query fails" do
+        allow(remote_client).to receive(:send_command)
+          .with("p File.exist?(\"/app/test.rb\")")
+          .and_return('=> "true"')
+        allow(remote_client).to receive(:send_command)
+          .with("p File.readlines(\"/app/test.rb\").size")
+          .and_return("=> nil")
+
+        response = described_class.call(path: "/app/test.rb", server_context: remote_context)
+        text = response_text(response)
+
+        expect(text).to include("Error reading remote file")
+        expect(text).to include("failed to get line count")
+      end
+
+      it "fetches file in multiple chunks when exceeding REMOTE_CHUNK_SIZE" do
+        # 80 lines > REMOTE_CHUNK_SIZE(50), so needs 2 chunks: [0..49] and [50..79]
+        allow(remote_client).to receive(:send_command)
+          .with("p File.exist?(\"/app/big.rb\")")
+          .and_return('=> "true"')
+        allow(remote_client).to receive(:send_command)
+          .with("p File.readlines(\"/app/big.rb\").size")
+          .and_return("=> 80")
+        allow(remote_client).to receive(:send_command)
+          .with("p File.readlines(\"/app/big.rb\")[0..49].join")
+          .and_return("=> \"#{(1..50).map { |i| "line #{i}\\n" }.join}\"")
+        allow(remote_client).to receive(:send_command)
+          .with("p File.readlines(\"/app/big.rb\")[50..79].join")
+          .and_return("=> \"#{(51..80).map { |i| "line #{i}\\n" }.join}\"")
+
+        response = described_class.call(path: "/app/big.rb", server_context: remote_context)
+        text = response_text(response)
+
+        expect(text).to include("80 lines")
+        expect(text).to include("1: line 1")
+        expect(text).to include("50: line 50")
+        expect(text).to include("51: line 51")
+        expect(text).to include("80: line 80")
+      end
+
+      it "returns partial result when chunk fetch returns nil mid-way" do
+        allow(remote_client).to receive(:send_command)
+          .with("p File.exist?(\"/app/partial.rb\")")
+          .and_return('=> "true"')
+        allow(remote_client).to receive(:send_command)
+          .with("p File.readlines(\"/app/partial.rb\").size")
+          .and_return("=> 80")
+        allow(remote_client).to receive(:send_command)
+          .with("p File.readlines(\"/app/partial.rb\")[0..49].join")
+          .and_return("=> \"#{(1..50).map { |i| "line #{i}\\n" }.join}\"")
+        allow(remote_client).to receive(:send_command)
+          .with("p File.readlines(\"/app/partial.rb\")[50..79].join")
+          .and_return("=> nil")
+
+        response = described_class.call(path: "/app/partial.rb", server_context: remote_context)
+        text = response_text(response)
+
+        # Should return the 50 lines from the first chunk
+        expect(text).to include("1: line 1")
+        expect(text).to include("50: line 50")
+        expect(text).not_to include("51: line 51")
+      end
+
       it "falls back to local reading for non-remote connections" do
         response = described_class.call(path: tmpfile.path, server_context: server_context)
         text = response_text(response)

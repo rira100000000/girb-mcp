@@ -208,6 +208,12 @@ RSpec.describe GirbMcp::CodeSafetyAnalyzer do
         expect(warnings.first[:matches]).to include(".update")
       end
 
+      it "detects .update without parentheses" do
+        warnings = described_class.analyze("user.update name: 'test'")
+        expect(warnings.first[:category]).to eq(:mutation_operations)
+        expect(warnings.first[:matches]).to include(".update")
+      end
+
       it "detects .create!" do
         warnings = described_class.analyze("User.create!(name: 'test')")
         expect(warnings.first[:category]).to eq(:mutation_operations)
@@ -216,6 +222,12 @@ RSpec.describe GirbMcp::CodeSafetyAnalyzer do
 
       it "detects .create()" do
         warnings = described_class.analyze("User.create(name: 'test')")
+        expect(warnings.first[:category]).to eq(:mutation_operations)
+        expect(warnings.first[:matches]).to include(".create")
+      end
+
+      it "detects .create without parentheses" do
+        warnings = described_class.analyze("User.create name: 'test'")
         expect(warnings.first[:category]).to eq(:mutation_operations)
         expect(warnings.first[:matches]).to include(".create")
       end

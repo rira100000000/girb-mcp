@@ -148,35 +148,45 @@ RSpec.describe GirbMcp::Tools::Disconnect do
     end
 
     context "force disconnect" do
-      it "skips cleanup and disconnects immediately" do
+      it "skips cleanup and disconnects immediately for connect sessions" do
         response = described_class.call(force: true, server_context: server_context)
         text = response_text(response)
 
         expect(text).to include("Force-disconnected")
         expect(text).to include("cleanup skipped")
+        expect(text).to include("Breakpoints were NOT removed")
+        expect(text).to include("paused state")
         expect(client).not_to have_received(:send_command)
         expect(client).not_to have_received(:send_command_no_wait)
         expect(manager).to have_received(:disconnect)
       end
 
-      it "warns about unremoved breakpoints" do
-        response = described_class.call(force: true, server_context: server_context)
-        text = response_text(response)
-
-        expect(text).to include("Breakpoints were NOT removed")
-        expect(text).to include("paused state")
-      end
-
-      it "does not kill process even for run_script sessions" do
+      it "kills process for run_script sessions even in force mode" do
         wait_thread = instance_double(Thread, alive?: true)
         allow(client).to receive(:wait_thread).and_return(wait_thread)
         allow(client).to receive(:pid).and_return("999")
+        allow(Process).to receive(:kill)
+
+        response = described_class.call(force: true, server_context: server_context)
+        text = response_text(response)
+
+        expect(Process).to have_received(:kill).with("TERM", 999)
+        expect(text).to include("Force-disconnected")
+        expect(text).to include("Process 999 terminated")
+      end
+
+      it "warns when run_script process kill fails" do
+        wait_thread = instance_double(Thread, alive?: true)
+        allow(client).to receive(:wait_thread).and_return(wait_thread)
+        allow(client).to receive(:pid).and_return("999")
+        allow(Process).to receive(:kill).and_raise(Errno::ESRCH)
 
         response = described_class.call(force: true, server_context: server_context)
         text = response_text(response)
 
         expect(text).to include("Force-disconnected")
-        expect(text).not_to include("terminated")
+        expect(text).to include("NOT terminated")
+        expect(text).not_to include("paused state")
       end
     end
 

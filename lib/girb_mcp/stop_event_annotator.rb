@@ -33,8 +33,8 @@ module GirbMcp
                     "the block method is called (e.g., the .map line).",
       "call" => "WARNING - Stop event (call): The debug gem assigned this breakpoint to a method entry event " \
                 "instead of a line event. This typically happens when the breakpoint line is a method " \
-                "definition (e.g., 'def foo' or 'class Foo').\n" \
-                "  - It fires when the method/class is entered, which may not match your expectation\n" \
+                "definition (e.g., 'def foo').\n" \
+                "  - It fires when the method is entered, which may not match your expectation\n" \
                 "Tip: Set the breakpoint on a line inside the method body instead.",
       "b_call" => "WARNING - Stop event (b_call): The debug gem assigned this breakpoint to a block entry event " \
                   "instead of a line event. This typically happens when the breakpoint line is a block " \
@@ -52,6 +52,9 @@ module GirbMcp
                     "Tip: Set the breakpoint on a different line that contains Ruby code.",
     }.freeze
 
+    # Hit notes only for return/b_return events where the "already executed" semantics
+    # are confusing. call/b_call/c_call/c_return don't need hit annotations because
+    # the set-time warning already advises moving the breakpoint to a different line.
     BREAKPOINT_HIT_NOTES = {
       "return" => "Stop event (return): the marked line (=>) is the method definition. " \
                   "The method has ALREADY finished executing and returned.",

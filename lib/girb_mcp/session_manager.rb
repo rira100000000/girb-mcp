@@ -29,6 +29,11 @@ module GirbMcp
     # socket leaks when reconnecting to the same process.
     # Accepts an optional block that is passed through to DebugClient#connect
     # as the on_initial_timeout callback (used to wake IO-blocked processes).
+    # @param pre_cleanup_port [Integer, nil] TCP port of the debug connection target.
+    #   Used to disconnect existing sessions connected to the same port before
+    #   establishing a new connection. Essential for TCP/Docker reconnections where
+    #   the target PID is unknown until after connecting (unlike Unix sockets where
+    #   the PID is encoded in the socket filename).
     def connect(session_id: nil, path: nil, host: nil, port: nil,
                 connect_timeout: nil, pre_cleanup_pid: nil, pre_cleanup_port: nil, &on_initial_timeout)
       # Pre-cleanup: disconnect existing sessions for the same PID/session_id/port

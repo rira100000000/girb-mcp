@@ -114,6 +114,10 @@ module GirbMcp
 
           # Get total line count
           count_str = RailsHelper.eval_expr(client, "File.readlines(#{full_path.inspect}).size")
+          unless count_str
+            return MCP::Tool::Response.new([{ type: "text",
+              text: "Error reading remote file: failed to get line count for #{full_path}" }])
+          end
           total_lines = count_str.to_i
 
           # Determine line range

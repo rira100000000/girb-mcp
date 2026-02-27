@@ -51,11 +51,29 @@ module GirbMcp
           if force
             # Force disconnect: skip all cleanup, just close the socket immediately.
             # Use when the process is unresponsive and normal disconnect hangs.
+
+            # For run_script sessions, still attempt to kill the spawned process
+            # (Process.kill is non-blocking, so it won't hang even if the process is stuck).
+            process_killed = false
+            if has_process && pid
+              begin
+                Process.kill("TERM", pid.to_i)
+                process_killed = true
+              rescue Errno::ESRCH, Errno::EPERM
+                # Process already exited
+              end
+            end
+
             manager.disconnect(session_id)
 
             text = "Force-disconnected from session (cleanup skipped)."
-            text += "\n\nWARNING: Breakpoints were NOT removed and the process was NOT resumed. " \
-                    "The target process may be left in a paused state."
+            text += " Process #{pid} terminated." if process_killed
+            if has_process && !process_killed
+              text += "\n\nWARNING: The spawned process (PID #{pid}) was NOT terminated and may still be running."
+            else
+              text += "\n\nWARNING: Breakpoints were NOT removed and the process was NOT resumed. " \
+                      "The target process may be left in a paused state."
+            end
             text += "\n\nUse 'run_script' or 'connect' to start a new debug session."
             return MCP::Tool::Response.new([{ type: "text", text: text }])
           end
