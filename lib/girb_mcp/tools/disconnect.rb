@@ -90,15 +90,32 @@ module GirbMcp
           else
             # For connect sessions: best-effort cleanup (restore SIGINT,
             # delete BPs, continue) bounded by a hard deadline.
-            # If not paused, try SIGINT to re-pause before cleanup.
+            # If not paused, try to re-pause before cleanup.
             unless client.paused
+              # 1. Try repause() first — works for both remote (TCP/Docker) and local
               begin
-                client.interrupt_and_wait(timeout: 3)
+                client.repause(timeout: 3)
               rescue GirbMcp::Error
-                # Best-effort — if interrupt fails, skip cleanup
+                # Best-effort
+              end
+
+              # 2. Fall back to interrupt_and_wait (local SIGINT only)
+              unless client.paused
+                begin
+                  client.interrupt_and_wait(timeout: 3)
+                rescue GirbMcp::Error
+                  # Best-effort
+                end
               end
             end
-            best_effort_cleanup(client) if client.paused
+
+            if client.paused
+              best_effort_cleanup(client)
+            else
+              # Both repause and interrupt failed — auto-escalate to force disconnect
+              force_warning = "Could not re-pause the process for cleanup. " \
+                              "Breakpoints may remain and the process may need to be restarted."
+            end
           end
 
           # Disconnect the session (closes socket, cleans up temp files)
@@ -106,6 +123,7 @@ module GirbMcp
 
           text = "Disconnected from session."
           text += " Process #{pid} terminated." if process_killed
+          text += "\n\nWARNING: #{force_warning}" if force_warning
           text += "\n\nUse 'run_script' or 'connect' to start a new debug session."
 
           MCP::Tool::Response.new([{ type: "text", text: text }])

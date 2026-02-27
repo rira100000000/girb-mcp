@@ -542,8 +542,11 @@ RSpec.describe GirbMcp::SessionManager do
       expect(client).not_to have_received(:send_command_no_wait)
     end
 
-    it "skips when client is not paused" do
+    it "tries repause when client is not paused" do
       client = build_mock_client(paused: false)
+      allow(client).to receive(:repause).with(timeout: 3).and_return("")
+      # After repause, still not paused (repause failed to change state)
+      allow(client).to receive(:paused).and_return(false)
 
       info = GirbMcp::SessionManager::SessionInfo.new(
         client: client, connected_at: Time.now, last_activity_at: Time.now,
@@ -551,8 +554,25 @@ RSpec.describe GirbMcp::SessionManager do
 
       manager.send(:resume_before_disconnect, info)
 
+      expect(client).to have_received(:repause).with(timeout: 3)
       expect(client).not_to have_received(:send_command)
       expect(client).not_to have_received(:send_command_no_wait)
+    end
+
+    it "proceeds with cleanup when repause succeeds for not-paused client" do
+      client = build_mock_client(paused: false)
+      allow(client).to receive(:repause).with(timeout: 3).and_return("")
+      # After repause, client is paused
+      allow(client).to receive(:paused).and_return(false, true)
+
+      info = GirbMcp::SessionManager::SessionInfo.new(
+        client: client, connected_at: Time.now, last_activity_at: Time.now,
+      )
+
+      manager.send(:resume_before_disconnect, info)
+
+      expect(client).to have_received(:repause).with(timeout: 3)
+      expect(client).to have_received(:send_command_no_wait).with("c", force: true)
     end
 
     it "continues even when BP info fails" do

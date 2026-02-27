@@ -373,6 +373,16 @@ module GirbMcp
     def resume_before_disconnect(info)
       return unless info.client.connected?
       return if info.client.wait_thread # run_script sessions don't need resume
+
+      # If not paused, try repause() to get control back (works for remote/local)
+      unless info.client.paused
+        begin
+          info.client.repause(timeout: 3)
+        rescue GirbMcp::Error
+          # Best-effort
+        end
+      end
+
       return unless info.client.paused  # Can't send commands to a running process
 
       deadline = Time.now + RESUME_DEADLINE

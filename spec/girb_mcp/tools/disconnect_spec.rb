@@ -92,41 +92,46 @@ RSpec.describe GirbMcp::Tools::Disconnect do
       expect(client).to have_received(:send_command_no_wait).with("c", force: true)
     end
 
-    it "tries interrupt_and_wait when process is not paused" do
-      allow(client).to receive(:paused).and_return(false, true)
+    it "tries repause then interrupt_and_wait when process is not paused" do
+      allow(client).to receive(:paused).and_return(false, false, true)
+      allow(client).to receive(:repause).with(timeout: 3).and_raise(GirbMcp::TimeoutError, "timeout")
       allow(client).to receive(:interrupt_and_wait).with(timeout: 3).and_return("")
 
       response = described_class.call(server_context: server_context)
       text = response_text(response)
 
+      expect(client).to have_received(:repause).with(timeout: 3)
       expect(client).to have_received(:interrupt_and_wait).with(timeout: 3)
       expect(client).to have_received(:send_command_no_wait).with("c", force: true)
       expect(text).to include("Disconnected from session")
     end
 
-    it "skips cleanup when interrupt_and_wait fails" do
-      allow(client).to receive(:paused).and_return(false)
-      allow(client).to receive(:interrupt_and_wait).with(timeout: 3).and_return(nil)
+    it "uses repause to re-pause remote client without interrupt_and_wait" do
+      allow(client).to receive(:paused).and_return(false, true)
+      allow(client).to receive(:repause).with(timeout: 3).and_return("")
 
       response = described_class.call(server_context: server_context)
       text = response_text(response)
 
-      expect(client).to have_received(:interrupt_and_wait).with(timeout: 3)
-      expect(client).not_to have_received(:send_command)
-      expect(client).not_to have_received(:send_command_no_wait)
+      expect(client).to have_received(:repause).with(timeout: 3)
+      expect(client).not_to have_received(:interrupt_and_wait)
+      expect(client).to have_received(:send_command_no_wait).with("c", force: true)
       expect(text).to include("Disconnected from session")
     end
 
-    it "handles interrupt_and_wait error gracefully" do
+    it "auto-escalates with warning when both repause and interrupt fail" do
       allow(client).to receive(:paused).and_return(false)
-      allow(client).to receive(:interrupt_and_wait).and_raise(
-        GirbMcp::ConnectionError, "Connection lost"
-      )
+      allow(client).to receive(:repause).and_raise(GirbMcp::TimeoutError, "timeout")
+      allow(client).to receive(:interrupt_and_wait).and_raise(GirbMcp::ConnectionError, "lost")
 
       response = described_class.call(server_context: server_context)
       text = response_text(response)
 
       expect(text).to include("Disconnected from session")
+      expect(text).to include("WARNING:")
+      expect(text).to match(/could not re-pause/i)
+      expect(client).not_to have_received(:send_command)
+      expect(client).not_to have_received(:send_command_no_wait)
     end
 
     it "does not send continue for run_script sessions" do
