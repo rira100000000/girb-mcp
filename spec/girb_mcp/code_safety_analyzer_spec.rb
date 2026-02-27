@@ -176,6 +176,86 @@ RSpec.describe GirbMcp::CodeSafetyAnalyzer do
       end
     end
 
+    context "mutation operations" do
+      it "detects .save!" do
+        warnings = described_class.analyze("user.save!")
+        expect(warnings.length).to eq(1)
+        expect(warnings.first[:category]).to eq(:mutation_operations)
+        expect(warnings.first[:matches]).to include(".save!")
+      end
+
+      it "detects .save (without ?)" do
+        warnings = described_class.analyze("user.save")
+        expect(warnings.length).to eq(1)
+        expect(warnings.first[:matches]).to include(".save")
+      end
+
+      it "does not flag .save?" do
+        warnings = described_class.analyze("user.save?")
+        mutation_warnings = warnings.select { |w| w[:category] == :mutation_operations }
+        expect(mutation_warnings).to be_empty
+      end
+
+      it "detects .update!" do
+        warnings = described_class.analyze("user.update!(name: 'test')")
+        expect(warnings.first[:category]).to eq(:mutation_operations)
+        expect(warnings.first[:matches]).to include(".update!")
+      end
+
+      it "detects .update()" do
+        warnings = described_class.analyze("user.update(name: 'test')")
+        expect(warnings.first[:category]).to eq(:mutation_operations)
+        expect(warnings.first[:matches]).to include(".update")
+      end
+
+      it "detects .create!" do
+        warnings = described_class.analyze("User.create!(name: 'test')")
+        expect(warnings.first[:category]).to eq(:mutation_operations)
+        expect(warnings.first[:matches]).to include(".create!")
+      end
+
+      it "detects .create()" do
+        warnings = described_class.analyze("User.create(name: 'test')")
+        expect(warnings.first[:category]).to eq(:mutation_operations)
+        expect(warnings.first[:matches]).to include(".create")
+      end
+
+      it "detects .destroy (without _all)" do
+        warnings = described_class.analyze("user.destroy")
+        expect(warnings.first[:category]).to eq(:mutation_operations)
+        expect(warnings.first[:matches]).to include(".destroy")
+      end
+
+      it "does not flag .destroy_all as mutation (separate category)" do
+        warnings = described_class.analyze("User.destroy_all")
+        categories = warnings.map { |w| w[:category] }
+        expect(categories).to include(:destructive_data)
+        # destroy_all should NOT also match .destroy in mutation_operations
+        mutation = warnings.find { |w| w[:category] == :mutation_operations }
+        expect(mutation).to be_nil
+      end
+
+      it "detects .touch" do
+        warnings = described_class.analyze("user.touch")
+        expect(warnings.first[:matches]).to include(".touch")
+      end
+
+      it "detects .increment!" do
+        warnings = described_class.analyze("counter.increment!")
+        expect(warnings.first[:matches]).to include(".increment!")
+      end
+
+      it "detects .decrement!" do
+        warnings = described_class.analyze("counter.decrement!")
+        expect(warnings.first[:matches]).to include(".decrement!")
+      end
+
+      it "detects .toggle!" do
+        warnings = described_class.analyze("user.toggle!(:active)")
+        expect(warnings.first[:matches]).to include(".toggle!")
+      end
+    end
+
     context "multiple categories" do
       it "detects patterns across multiple categories" do
         code = 'system("curl http://example.com"); File.write("/tmp/out", result)'

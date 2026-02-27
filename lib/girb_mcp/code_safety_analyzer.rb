@@ -42,6 +42,20 @@ module GirbMcp
         [/\.update_all\b/, ".update_all"],
         [/\b(DROP|TRUNCATE)\s+(TABLE|DATABASE)\b/i, "DROP/TRUNCATE SQL"],
       ],
+      mutation_operations: [
+        [/\.save!/, ".save!"],
+        [/\.save\b(?![!?])/, ".save"],
+        [/\.update!\(/, ".update!"],
+        [/\.update\(/, ".update"],
+        [/\.create!\(/, ".create!"],
+        [/\.create\(/, ".create"],
+        [/\.destroy!/, ".destroy!"],
+        [/\.destroy\b(?![_!])/, ".destroy"],
+        [/\.touch\b/, ".touch"],
+        [/\.increment!/, ".increment!"],
+        [/\.decrement!/, ".decrement!"],
+        [/\.toggle!/, ".toggle!"],
+      ],
     }.freeze
 
     # Analyze code for dangerous patterns.
@@ -68,6 +82,7 @@ module GirbMcp
       process_manipulation: "Process manipulation",
       network_operations: "Network operations",
       destructive_data: "Destructive data operations",
+      mutation_operations: "Data mutation (modifies database records)",
     }.freeze
 
     # Format warnings into human-readable text.
