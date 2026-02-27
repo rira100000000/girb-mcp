@@ -548,6 +548,39 @@ RSpec.describe GirbMcp::DebugClient do
       )
     end
 
+    it "retries repause for remote clients instead of SIGINT" do
+      client, server = setup_client_with_socket
+      client.instance_variable_set(:@paused, false)
+      client.instance_variable_set(:@remote, true)
+
+      call_count = 0
+      allow(client).to receive(:repause) do
+        call_count += 1
+        call_count == 1 ? nil : ""
+      end
+
+      result = client.auto_repause!
+      expect(result).to be true
+      expect(client).to have_received(:repause).twice
+    ensure
+      server.close rescue nil
+    end
+
+    it "raises SessionError when both repause attempts fail for remote clients" do
+      client = GirbMcp::DebugClient.new
+      client.instance_variable_set(:@connected, true)
+      client.instance_variable_set(:@paused, false)
+      client.instance_variable_set(:@remote, true)
+      client.instance_variable_set(:@pid, "99999")
+
+      allow(client).to receive(:repause).and_return(nil)
+
+      expect { client.auto_repause! }.to raise_error(
+        GirbMcp::SessionError, /could not be interrupted/
+      )
+      expect(client).to have_received(:repause).twice
+    end
+
     it "falls back to SIGINT when repause fails" do
       client, server = setup_client_with_socket
       client.instance_variable_set(:@paused, false)

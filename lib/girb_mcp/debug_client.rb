@@ -375,10 +375,18 @@ module GirbMcp
 
       result = repause(timeout: 3)
       if result.nil?
-        # SIGURG-based repause failed (e.g., process blocked on C-level IO).
-        # Fall back to SIGINT which can interrupt IO.select and similar calls.
-        int_result = interrupt_and_wait(timeout: 5)
-        if int_result.nil?
+        if @remote
+          # Remote: interrupt_and_wait always returns nil (SIGINT can't reach the
+          # target process in a different PID namespace). Retry repause instead —
+          # the first `pause` message may still be in the TCP buffer and the second
+          # drain_socket_buffer call inside repause can pick up the response.
+          result = repause(timeout: 5)
+        else
+          # Local: SIGINT can interrupt IO.select and similar C-level blocking calls.
+          result = interrupt_and_wait(timeout: 5)
+        end
+
+        if result.nil?
           raise SessionError, "Process is not paused and could not be interrupted. " \
                               "The process may have exited or be in an unrecoverable state. " \
                               "Use 'disconnect' and 'connect' to re-attach."
