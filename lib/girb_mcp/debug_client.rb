@@ -201,8 +201,8 @@ module GirbMcp
     # Uses continue_and_wait (IO.select-based) instead of send_command to avoid
     # protocol desync: send_command sets @paused=true on timeout even when no
     # input prompt was received, causing subsequent commands to read stale responses.
-    def send_continue(timeout: CONTINUE_TIMEOUT)
-      result = continue_and_wait(timeout: timeout)
+    def send_continue(timeout: CONTINUE_TIMEOUT, &interrupt_check)
+      result = continue_and_wait(timeout: timeout, &interrupt_check)
       case result[:type]
       when :breakpoint
         result[:output]

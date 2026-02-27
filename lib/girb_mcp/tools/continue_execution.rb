@@ -41,7 +41,11 @@ module GirbMcp
           pending = client.pending_http
           client.pending_http = nil if pending
 
-          output = client.send_continue
+          output = if pending
+            client.send_continue { pending[:holder][:done] }
+          else
+            client.send_continue
+          end
 
           # The debug gem may send an `input` prompt just before the process exits
           # (e.g., on a return event from the main script). When output is empty,

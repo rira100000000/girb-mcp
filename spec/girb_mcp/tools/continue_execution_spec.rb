@@ -211,6 +211,41 @@ RSpec.describe GirbMcp::Tools::ContinueExecution do
         expect(text).to include("--- HTTP Response ---")
         expect(text).to include("200 OK")
       end
+
+      it "passes interrupt_check to send_continue when pending HTTP exists" do
+        http_holder = { response: { status: "200 OK", headers: {}, body: "ok" }, error: nil, done: true }
+        http_thread = Thread.new {}
+        http_thread.join
+
+        allow(client).to receive(:pending_http).and_return({
+          thread: http_thread, holder: http_holder, method: "GET", url: "http://localhost:3000/users",
+        })
+
+        # Capture the block passed to send_continue
+        captured_block = nil
+        allow(client).to receive(:send_continue) do |&block|
+          captured_block = block
+          ""
+        end
+        allow(client).to receive(:process_finished?).and_return(false)
+
+        described_class.call(server_context: server_context)
+        expect(captured_block).not_to be_nil
+        expect(captured_block.call).to be true # holder[:done] is true
+      end
+
+      it "does not pass interrupt_check when no pending HTTP" do
+        allow(client).to receive(:pending_http).and_return(nil)
+
+        captured_block = nil
+        allow(client).to receive(:send_continue) do |&block|
+          captured_block = block
+          "Stop by #1  BP - Line  file.rb:10 (line)"
+        end
+
+        described_class.call(server_context: server_context)
+        expect(captured_block).to be_nil
+      end
     end
   end
 end
