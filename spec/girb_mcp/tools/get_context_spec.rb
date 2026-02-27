@@ -258,4 +258,31 @@ RSpec.describe GirbMcp::Tools::GetContext do
       expect("x = [1, 2, 3]").not_to match(GirbMcp::Tools::GetContext::TRUNCATION_PATTERN)
     end
   end
+
+  describe "pending HTTP notification" do
+    before do
+      allow(client).to receive(:send_command).with("list").and_return("=> 1: code")
+      allow(client).to receive(:send_command).with("info locals").and_return("x = 1")
+      allow(client).to receive(:send_command).with("info ivars").and_return("")
+      allow(client).to receive(:send_command).with("bt").and_return("#0 main at test.rb:1")
+      allow(client).to receive(:send_command).with("info breakpoints").and_return("")
+    end
+
+    it "includes note when HTTP response is ready" do
+      holder = { response: { status: "201 Created" }, error: nil, done: true }
+      allow(client).to receive(:pending_http).and_return(
+        { holder: holder, method: "POST", url: "http://localhost:3000/users" },
+      )
+
+      response = described_class.call(server_context: server_context)
+      text = response_text(response)
+      expect(text).to include("HTTP response received (201 Created)")
+    end
+
+    it "does not include note when no pending HTTP" do
+      response = described_class.call(server_context: server_context)
+      text = response_text(response)
+      expect(text).not_to include("HTTP response")
+    end
+  end
 end

@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "mcp"
+require_relative "../pending_http_helper"
 
 module GirbMcp
   module Tools
@@ -122,6 +123,10 @@ module GirbMcp
                      "Use 'inspect_object' to see full contents (e.g., inspect_object(expression: 'variable_name'))."
           else
             parts << "---\nTip: Use 'evaluate_code' or 'inspect_object' for detailed variable inspection."
+          end
+
+          if (http_note = PendingHttpHelper.pending_http_note(client))
+            parts << http_note
           end
 
           MCP::Tool::Response.new([{ type: "text", text: parts.join("\n\n") }])

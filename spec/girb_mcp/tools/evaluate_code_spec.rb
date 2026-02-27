@@ -325,5 +325,37 @@ RSpec.describe GirbMcp::Tools::EvaluateCode do
         expect(text).not_to include("trap context")
       end
     end
+
+    context "pending HTTP notification" do
+      it "appends note when HTTP response is ready" do
+        holder = { response: { status: "200 OK" }, error: nil, done: true }
+        allow(client).to receive(:pending_http).and_return(
+          { holder: holder, method: "GET", url: "http://localhost:3000/users" },
+        )
+
+        response = described_class.call(code: "1 + 1", server_context: server_context)
+        text = response_text(response)
+        expect(text).to include("HTTP response received (200 OK)")
+        expect(text).to include("continue_execution")
+      end
+
+      it "does not append note when no pending HTTP" do
+        response = described_class.call(code: "1 + 1", server_context: server_context)
+        text = response_text(response)
+        expect(text).not_to include("HTTP response")
+      end
+
+      it "appends note in trap context path" do
+        allow(client).to receive(:trap_context).and_return(true)
+        holder = { response: { status: "200 OK" }, error: nil, done: true }
+        allow(client).to receive(:pending_http).and_return(
+          { holder: holder, method: "POST", url: "http://localhost:3000/users" },
+        )
+
+        response = described_class.call(code: "1 + 1", server_context: server_context)
+        text = response_text(response)
+        expect(text).to include("HTTP response received (200 OK)")
+      end
+    end
   end
 end

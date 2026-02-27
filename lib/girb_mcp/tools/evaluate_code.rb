@@ -3,6 +3,7 @@
 require "mcp"
 require "base64"
 require_relative "../code_safety_analyzer"
+require_relative "../pending_http_helper"
 
 module GirbMcp
   module Tools
@@ -110,6 +111,7 @@ module GirbMcp
             end
             text = append_frame_info(client, text)
             text = append_trap_context_note(client, text)
+            text = append_pending_http_note(client, text)
             text = prepend_warning(text, warning_text)
             MCP::Tool::Response.new([{ type: "text", text: text }])
           rescue GirbMcp::TimeoutError => e
@@ -154,6 +156,7 @@ module GirbMcp
 
           text = output
           text = append_trap_context_note(client, text)
+          text = append_pending_http_note(client, text)
           text = prepend_warning(text, warning_text)
           MCP::Tool::Response.new([{ type: "text", text: text }])
         rescue GirbMcp::TimeoutError => e
@@ -256,6 +259,11 @@ module GirbMcp
         def append_trap_context_note(client, text)
           return text unless client.respond_to?(:trap_context) && client.trap_context
           "#{text}\n\n[trap context]"
+        end
+
+        def append_pending_http_note(client, text)
+          note = PendingHttpHelper.pending_http_note(client)
+          note ? "#{text}\n\n#{note}" : text
         end
 
         # Temporarily remove all catch breakpoints by deleting them.

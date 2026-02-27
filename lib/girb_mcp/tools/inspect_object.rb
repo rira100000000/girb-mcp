@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "mcp"
+require_relative "../pending_http_helper"
 
 module GirbMcp
   module Tools
@@ -72,6 +73,9 @@ module GirbMcp
 
           text = parts.join("\n\n")
           text = append_trap_context_note(client, text)
+          if (http_note = PendingHttpHelper.pending_http_note(client))
+            text = "#{text}\n\n#{http_note}"
+          end
           MCP::Tool::Response.new([{ type: "text", text: text }])
         rescue GirbMcp::Error => e
           MCP::Tool::Response.new([{ type: "text", text: "Error: #{e.message}" }])
