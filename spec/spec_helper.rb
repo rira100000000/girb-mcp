@@ -19,12 +19,13 @@ RSpec.configure do |config|
 end
 
 # Helper to build a mock DebugClient
-def build_mock_client(connected: true, pid: "12345", paused: true, trap_context: false)
+def build_mock_client(connected: true, pid: "12345", paused: true, trap_context: false, remote: false)
   client = instance_double(GirbMcp::DebugClient,
     connected?: connected,
     pid: pid,
     paused: paused,
     trap_context: trap_context,
+    remote: remote,
     wait_thread: nil,
     stderr_file: nil,
     stdout_file: nil,

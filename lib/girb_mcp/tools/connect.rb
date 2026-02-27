@@ -380,9 +380,13 @@ module GirbMcp
             return auto_result if auto_result
           end
 
-          # Fall back to simple step escape (only for non-web-server processes
-          # where listen_ports is empty and auto-escape is not available)
-          unless listen_ports.any?
+          # Fall back to simple step escape (only for local, non-web-server processes
+          # where listen_ports is empty and auto-escape is not available).
+          # Skip when:
+          # - auto_escape is false (user explicitly opted out)
+          # - client.remote is true (TCP/Docker: `next` will timeout on IO-blocked
+          #   processes and Process.kill can't recover due to PID namespace mismatch)
+          if auto_escape && !client.remote && !listen_ports.any?
             step_output = client.escape_trap_context!
             if step_output
               return "\n  Status: Escaped signal trap context (thread operations now available)\n"

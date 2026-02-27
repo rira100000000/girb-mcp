@@ -16,7 +16,7 @@ module GirbMcp
     # ANSI escape code pattern
     ANSI_ESCAPE = /\e\[[0-9;]*m/
 
-    attr_reader :pid, :connected, :paused, :trap_context
+    attr_reader :pid, :connected, :paused, :trap_context, :remote
     attr_accessor :stderr_file, :stdout_file, :wait_thread, :script_file, :script_args, :pending_http,
       :listen_ports, :escape_target
 
@@ -26,6 +26,7 @@ module GirbMcp
       @connected = false
       @paused = false
       @trap_context = nil
+      @remote = false # True for TCP connections (e.g., Docker) where Process.kill won't work
       @width = DEFAULT_WIDTH
       @mutex = Mutex.new
       @one_shot_breakpoints = Set.new
@@ -49,11 +50,14 @@ module GirbMcp
 
       if path
         @socket = Socket.unix(path)
+        @remote = false
       elsif port
         @socket = Socket.tcp(host || "localhost", port.to_i)
+        @remote = true
       else
         path = discover_socket
         @socket = Socket.unix(path)
+        @remote = false
       end
 
       # The debug gem protocol: client sends greeting first, then reads server output
@@ -347,6 +351,13 @@ module GirbMcp
       return nil unless @pid
       return "" if @paused
 
+      if @remote
+        # For remote connections, SIGINT can't be sent directly.
+        # The `pause` protocol message (sent by repause) is the best we can do.
+        # Return nil to indicate we can't interrupt.
+        return nil
+      end
+
       Process.kill("INT", @pid.to_i)
       ensure_paused(timeout: timeout)
     rescue Errno::ESRCH, Errno::EPERM
@@ -409,11 +420,18 @@ module GirbMcp
 
         return "" if @paused
 
-        # Step 2: Send SIGURG directly to the target process. This triggers the
-        # debug gem's signal handler, which pauses the running thread and enters
-        # subsession. Unlike the `pause` protocol message, this doesn't leave
-        # data in the server's socket read buffer that could cause stale pauses.
-        Process.kill("URG", @pid.to_i)
+        # Step 2: Pause the running process.
+        # For local processes, send SIGURG directly — this avoids leaving stale
+        # data in the server's socket read buffer (unlike the `pause` protocol message).
+        # For remote/TCP connections (e.g., Docker), Process.kill won't reach the
+        # target process (PID is in a different namespace), so use the `pause`
+        # protocol message which the debug gem server sends as SIGURG to itself.
+        if @remote
+          @socket.write("pause #{@pid}\n".b)
+          @socket.flush
+        else
+          Process.kill("URG", @pid.to_i)
+        end
 
         # Step 3: Wait for `input PID` prompt
         result = wait_for_pause(timeout)

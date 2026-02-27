@@ -1,0 +1,10 @@
+tmp/
+log/
+storage/*.sqlite3
+.git
+.gitignore
+.ruby-version
+.claude/
+db/development.sqlite3
+node_modules/
+vendor/bundle

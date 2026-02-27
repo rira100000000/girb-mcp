@@ -402,7 +402,13 @@ module GirbMcp
 
       Process.kill(0, pid.to_i)
       true
-    rescue Errno::ESRCH, Errno::EPERM
+    rescue Errno::EPERM
+      # EPERM means the process exists but we lack permission to signal it.
+      # Common for Docker containers (PID 1 in container namespace maps to a
+      # different process on the host) or processes owned by other users.
+      true
+    rescue Errno::ESRCH
+      # ESRCH means no process with this PID exists.
       false
     end
 

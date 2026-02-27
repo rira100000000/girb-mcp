@@ -1,0 +1,21 @@
+services:
+  web:
+    build: .
+    ports:
+      - "3000:3000"
+      - "12345:12345"
+    environment:
+      - RUBY_DEBUG_OPEN=true
+      - RUBY_DEBUG_HOST=0.0.0.0
+      - RUBY_DEBUG_PORT=12345
+      - RAILS_ENV=development
+    volumes:
+      - .:/app
+      - bundle_cache:/usr/local/bundle
+      - storage:/app/storage
+    tmpfs:
+      - /app/tmp
+
+volumes:
+  bundle_cache:
+  storage:
