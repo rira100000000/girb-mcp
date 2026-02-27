@@ -23,13 +23,19 @@ module GirbMcp
             type: "string",
             description: "Debug session ID to disconnect (uses default session if omitted)",
           },
+          force: {
+            type: "boolean",
+            description: "If true, skip all cleanup (breakpoint deletion, process resume) and " \
+                         "immediately close the socket. Use when the process is unresponsive " \
+                         "and normal disconnect times out. Default: false.",
+          },
         },
       )
 
       CLEANUP_DEADLINE = 3
 
       class << self
-        def call(session_id: nil, server_context:)
+        def call(session_id: nil, force: nil, server_context:)
           manager = server_context[:session_manager]
 
           # Get session info before disconnecting
@@ -40,6 +46,18 @@ module GirbMcp
           rescue GirbMcp::Error
             return MCP::Tool::Response.new([{ type: "text",
               text: "No active session to disconnect." }])
+          end
+
+          if force
+            # Force disconnect: skip all cleanup, just close the socket immediately.
+            # Use when the process is unresponsive and normal disconnect hangs.
+            manager.disconnect(session_id)
+
+            text = "Force-disconnected from session (cleanup skipped)."
+            text += "\n\nWARNING: Breakpoints were NOT removed and the process was NOT resumed. " \
+                    "The target process may be left in a paused state."
+            text += "\n\nUse 'run_script' or 'connect' to start a new debug session."
+            return MCP::Tool::Response.new([{ type: "text", text: text }])
           end
 
           # Kill the target process if launched via run_script
