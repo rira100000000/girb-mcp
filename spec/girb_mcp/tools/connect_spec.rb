@@ -895,5 +895,113 @@ RSpec.describe GirbMcp::Tools::Connect do
         expect(text).to include("Connected to debug session")
       end
     end
+
+    context "Docker TCP fallback for listen port detection" do
+      let(:client) { build_mock_client(remote: true) }
+      let(:manager) { build_mock_manager(client: client) }
+
+      before do
+        # TCP port connection: PID is nil pre-connect, no /proc-based detection
+        allow(Dir).to receive(:exist?).and_call_original
+        allow(Dir).to receive(:exist?).with("/proc/12345/fd").and_return(false)
+      end
+
+      it "falls back to container_web_ports when detect_listen_ports is empty and remote" do
+        allow(GirbMcp::TcpSessionDiscovery).to receive(:container_web_ports)
+          .with(12345)
+          .and_return([3000])
+
+        response = described_class.call(port: 12345, server_context: server_context)
+        text = response_text(response)
+
+        expect(GirbMcp::TcpSessionDiscovery).to have_received(:container_web_ports).with(12345)
+        expect(text).to include("Listening on:")
+        expect(text).to include("http://127.0.0.1:3000")
+      end
+
+      it "triggers auto-escape with Docker-discovered ports" do
+        allow(GirbMcp::TcpSessionDiscovery).to receive(:container_web_ports)
+          .with(12345)
+          .and_return([3000])
+
+        allow(client).to receive(:in_trap_context?).and_return(true)
+
+        # Rails detection
+        allow(client).to receive(:send_command)
+          .with("p defined?(Rails)")
+          .and_return('=> "constant"')
+
+        # Route info
+        allow(client).to receive(:send_command)
+          .with(/routes\.count/)
+          .and_return("=> 0")
+        allow(client).to receive(:send_command)
+          .with(/routes\.select.*first/)
+          .and_return('=> ""')
+
+        # Framework fallback
+        allow(client).to receive(:send_command)
+          .with(/ActionController::Metal\.instance_method.*dispatch.*source_location/)
+          .and_return('=> ["/gems/actionpack/lib/action_controller/metal.rb", 210]')
+
+        # Breakpoint + escape
+        allow(client).to receive(:send_command)
+          .with("break /gems/actionpack/lib/action_controller/metal.rb:211")
+          .and_return("#1  BP - Line  metal.rb:211")
+        allow(client).to receive(:continue_and_wait)
+          .and_return({ type: :breakpoint, output: "Stop by #1" })
+        allow(client).to receive(:send_command)
+          .with("delete 1")
+          .and_return("")
+
+        response = described_class.call(port: 12345, server_context: server_context)
+        text = response_text(response)
+
+        expect(text).to include("Auto-escaped signal trap context")
+      end
+
+      it "does not call container_web_ports for non-remote connections" do
+        local_client = build_mock_client(remote: false)
+        local_manager = build_mock_manager(client: local_client)
+        local_context = { session_manager: local_manager }
+
+        allow(GirbMcp::TcpSessionDiscovery).to receive(:container_web_ports)
+
+        described_class.call(port: 12345, server_context: local_context)
+
+        expect(GirbMcp::TcpSessionDiscovery).not_to have_received(:container_web_ports)
+      end
+
+      it "does not call container_web_ports when no port specified" do
+        allow(GirbMcp::TcpSessionDiscovery).to receive(:container_web_ports)
+
+        described_class.call(server_context: server_context)
+
+        expect(GirbMcp::TcpSessionDiscovery).not_to have_received(:container_web_ports)
+      end
+
+      it "does not call container_web_ports when detect_listen_ports finds ports" do
+        # Set up /proc-based detection to find port 3000
+        allow(Dir).to receive(:exist?).with("/proc/12345/fd").and_return(true)
+        allow(Dir).to receive(:foreach).and_call_original
+        allow(Dir).to receive(:foreach).with("/proc/12345/fd").and_yield("5")
+        allow(File).to receive(:readlink).and_call_original
+        allow(File).to receive(:readlink).with("/proc/12345/fd/5").and_return("socket:[99999]")
+        allow(File).to receive(:exist?).and_call_original
+        allow(File).to receive(:exist?).with("/proc/12345/net/tcp").and_return(true)
+        allow(File).to receive(:exist?).with("/proc/12345/net/tcp6").and_return(false)
+        tcp_content = <<~TCP
+          sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode
+           0: 00000000:0BB8 00000000:0000 0A 00000000:00000000 00:00000000 00000000  1000        0 99999
+        TCP
+        allow(File).to receive(:readlines).with("/proc/12345/net/tcp").and_return(tcp_content.lines)
+
+        allow(GirbMcp::TcpSessionDiscovery).to receive(:container_web_ports)
+
+        described_class.call(port: 12345, server_context: server_context)
+
+        expect(GirbMcp::TcpSessionDiscovery).not_to have_received(:container_web_ports)
+      end
+    end
   end
 end

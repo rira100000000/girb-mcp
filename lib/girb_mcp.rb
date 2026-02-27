@@ -5,6 +5,7 @@ require_relative "girb_mcp/debug_client"
 require_relative "girb_mcp/session_manager"
 require_relative "girb_mcp/exit_message_builder"
 require_relative "girb_mcp/stop_event_annotator"
+require_relative "girb_mcp/tcp_session_discovery"
 require_relative "girb_mcp/server"
 
 module GirbMcp
