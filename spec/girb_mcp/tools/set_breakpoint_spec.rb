@@ -97,6 +97,22 @@ RSpec.describe GirbMcp::Tools::SetBreakpoint do
         expect(text).to include("nearest breakable line")
       end
 
+      it "annotates duplicate line breakpoint with existing BP id" do
+        allow(client).to receive(:send_command)
+          .with("break app/models/user.rb:10")
+          .and_return("#0  BP - Line  app/models/user.rb:10 (line) (duplicated)")
+
+        response = described_class.call(
+          file: "app/models/user.rb",
+          line: 10,
+          server_context: server_context,
+        )
+        text = response_text(response)
+        expect(text).to include("Already set: breakpoint #0")
+        expect(text).to include("No new breakpoint created")
+        expect(text).to include("duplicated")
+      end
+
       it "annotates return event warning" do
         allow(client).to receive(:send_command).and_return("#1  BP - Line  f.rb:10 (return)")
 
@@ -139,6 +155,20 @@ RSpec.describe GirbMcp::Tools::SetBreakpoint do
           condition: "user.valid?",
           server_context: server_context,
         )
+      end
+
+      it "annotates duplicate method breakpoint with existing BP id" do
+        allow(client).to receive(:send_command)
+          .with("break User#save")
+          .and_return("#2  BP - Method  User#save (call) (duplicated)")
+
+        response = described_class.call(
+          method: "User#save",
+          server_context: server_context,
+        )
+        text = response_text(response)
+        expect(text).to include("Already set: breakpoint #2")
+        expect(text).to include("No new breakpoint created")
       end
 
       it "records method breakpoint for preservation" do

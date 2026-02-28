@@ -93,6 +93,11 @@ module GirbMcp
           output = client.send_command(command)
           output = GirbMcp::StopEventAnnotator.annotate_breakpoint_set(output)
 
+          # Detect duplicate breakpoint
+          if output.include?("duplicated")
+            return MCP::Tool::Response.new([{ type: "text", text: annotate_duplicate(output) }])
+          end
+
           # Detect line adjustment by debug gem
           if (bp_match = output.match(/#\d+\s+BP - Line\s+.+:(\d+)/))
             actual_line = bp_match[1].to_i
@@ -124,6 +129,11 @@ module GirbMcp
 
           output = client.send_command(command)
           output = GirbMcp::StopEventAnnotator.annotate_breakpoint_set(output)
+
+          # Detect duplicate breakpoint
+          if output.include?("duplicated")
+            return MCP::Tool::Response.new([{ type: "text", text: annotate_duplicate(output) }])
+          end
 
           manager.record_breakpoint(command) unless one_shot
 
@@ -170,6 +180,17 @@ module GirbMcp
           "The breakpoint was set but will never fire if the condition is invalid."
         rescue GirbMcp::Error
           nil
+        end
+
+        # Annotate a "duplicated" breakpoint response with a clearer message.
+        # Debug gem output example: "#0  BP - Line  app/models/user.rb:10 (line) (duplicated)"
+        def annotate_duplicate(output)
+          bp_id = output.match(/#(\d+)/)&.then { |m| m[1] }
+          if bp_id
+            "Already set: breakpoint ##{bp_id} exists at this location. No new breakpoint created.\n\n#{output}"
+          else
+            "Already set: a breakpoint already exists at this location. No new breakpoint created.\n\n#{output}"
+          end
         end
 
         def set_catch_breakpoint(client, manager, exception_class)
