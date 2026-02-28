@@ -79,6 +79,10 @@ RSpec.describe GirbMcp::Tools::ContinueExecution do
         text = response_text(response)
         expect(text).to include("no breakpoint was hit")
         expect(text).to include("still running")
+        expect(text).to include("set_breakpoint")
+        expect(text).to include("trigger_request")
+        expect(text).to include("disconnect")
+        expect(text).not_to include("get_context")
       end
 
       it "shows 'resumed successfully' when no breakpoints" do
@@ -90,6 +94,9 @@ RSpec.describe GirbMcp::Tools::ContinueExecution do
         text = response_text(response)
         expect(text).to include("resumed successfully")
         expect(text).to include("no breakpoints set")
+        expect(text).to include("set_breakpoint")
+        expect(text).to include("trigger_request")
+        expect(text).not_to include("get_context")
       end
 
       it "includes session lifetime note" do

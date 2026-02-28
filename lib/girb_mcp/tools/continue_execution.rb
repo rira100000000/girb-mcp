@@ -76,10 +76,11 @@ module GirbMcp
         rescue GirbMcp::TimeoutError
           text = if has_breakpoints
             "Execution continued but no breakpoint was hit within the timeout period.\n" \
-            "The process is still running. Use 'get_context' to check the current state."
+            "The process is still running — use 'set_breakpoint' then 'trigger_request' to hit a specific code path, " \
+            "or 'disconnect' to detach."
           else
             "Process resumed successfully (running normally, no breakpoints set).\n" \
-            "Use 'set_breakpoint' to add breakpoints, then 'trigger_request' or wait for the code path to execute."
+            "Use 'set_breakpoint' to add breakpoints, then 'trigger_request' to hit a specific code path."
           end
           timeout_sec = server_context[:session_manager]&.timeout
           if timeout_sec
