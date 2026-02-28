@@ -112,9 +112,14 @@ module GirbMcp
             if client.paused
               best_effort_cleanup(client)
             else
-              # Both repause and interrupt failed — auto-escalate to force disconnect
+              # Both repause and interrupt failed — best-effort resume to prevent stuck process
+              begin
+                client.send_command_no_wait("c", force: true)
+              rescue StandardError
+                # Best-effort
+              end
               force_warning = "Could not re-pause the process for cleanup. " \
-                              "Breakpoints may remain and the process may need to be restarted."
+                              "Breakpoints may remain. A resume command was sent to prevent the process from getting stuck."
             end
           end
 

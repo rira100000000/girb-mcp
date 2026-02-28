@@ -254,6 +254,31 @@ RSpec.describe GirbMcp::DebugClient do
         GirbMcp::SessionError, /Not connected/
       )
     end
+
+    it "drains stale data before sending continue command" do
+      client, server_sock = setup_client_with_socket
+      client.instance_variable_set(:@paused, true)
+
+      # Write stale data followed by a fresh breakpoint response
+      stale_data = "out stale leftover\ninput 12345\n"
+      fresh_bp = "out Stop by #1  BP - Line  app.rb:5\ninput 12345\n"
+      server_sock.write(stale_data)
+
+      # After drain, the client sends "c" and reads the fresh response
+      Thread.new do
+        sleep 0.05
+        # Read the continue command sent by the client
+        server_sock.gets
+        server_sock.write(fresh_bp)
+      end
+
+      result = client.continue_and_wait(timeout: 2)
+      expect(result[:output]).to include("Stop by #1")
+      expect(result[:output]).not_to include("stale leftover")
+    ensure
+      client&.instance_variable_get(:@socket)&.close rescue nil
+      server_sock&.close rescue nil
+    end
   end
 
   describe "#wait_for_breakpoint" do
@@ -262,6 +287,20 @@ RSpec.describe GirbMcp::DebugClient do
       expect { client.wait_for_breakpoint }.to raise_error(
         GirbMcp::SessionError, /Not connected/
       )
+    end
+
+    it "sets @paused to false while waiting" do
+      client, server_sock = setup_client_with_socket
+      client.instance_variable_set(:@paused, true)
+
+      # No data sent — will timeout and return { type: :timeout }
+      result = client.wait_for_breakpoint(timeout: 0.3)
+
+      expect(result[:type]).to eq(:timeout)
+      expect(client.paused).to be false
+    ensure
+      client&.instance_variable_get(:@socket)&.close rescue nil
+      server_sock&.close rescue nil
     end
   end
 

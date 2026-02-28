@@ -119,7 +119,7 @@ RSpec.describe GirbMcp::Tools::Disconnect do
       expect(text).to include("Disconnected from session")
     end
 
-    it "auto-escalates with warning when both repause and interrupt fail" do
+    it "auto-escalates with warning and sends resume when both repause and interrupt fail" do
       allow(client).to receive(:paused).and_return(false)
       allow(client).to receive(:repause).and_raise(GirbMcp::TimeoutError, "timeout")
       allow(client).to receive(:interrupt_and_wait).and_raise(GirbMcp::ConnectionError, "lost")
@@ -130,8 +130,9 @@ RSpec.describe GirbMcp::Tools::Disconnect do
       expect(text).to include("Disconnected from session")
       expect(text).to include("WARNING:")
       expect(text).to match(/could not re-pause/i)
+      expect(text).to include("resume command was sent")
       expect(client).not_to have_received(:send_command)
-      expect(client).not_to have_received(:send_command_no_wait)
+      expect(client).to have_received(:send_command_no_wait).with("c", force: true)
     end
 
     it "does not send continue for run_script sessions" do

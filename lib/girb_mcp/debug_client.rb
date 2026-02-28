@@ -471,6 +471,7 @@ module GirbMcp
       raise SessionError, "Not connected to a debug session." unless connected?
 
       @mutex.synchronize do
+        drain_stale_data
         msg = "command #{@pid} #{@width} c\n"
         @socket.write(msg.b)
         @socket.flush
@@ -491,6 +492,7 @@ module GirbMcp
       raise SessionError, "Not connected to a debug session." unless connected?
 
       @mutex.synchronize do
+        @paused = false
         read_until_input_interruptible(timeout: timeout, interrupt_check: interrupt_check)
       end
     rescue Errno::EPIPE, Errno::ECONNRESET, IOError => e
