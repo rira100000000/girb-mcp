@@ -94,9 +94,19 @@ module GirbMcp
 
     # Format warnings into human-readable text.
     # Returns nil if no warnings.
+    # Uses a compact "Note:" format when only mutation_operations are present,
+    # and a verbose "WARNING:" format when other categories are involved.
     def self.format_warnings(warnings)
       return nil if warnings.empty?
 
+      # Compact format for mutation-only warnings
+      if warnings.all? { |w| w[:category] == :mutation_operations }
+        matches = warnings.flat_map { |w| w[:matches] }
+        return "Note: Data mutation detected (#{matches.join(", ")}). " \
+               "Use acknowledge_mutations to suppress this notice."
+      end
+
+      # Verbose format for dangerous operations
       lines = []
       lines << "WARNING: Potentially dangerous operations detected in code."
       lines << "evaluate_code should only be used for investigating runtime state."

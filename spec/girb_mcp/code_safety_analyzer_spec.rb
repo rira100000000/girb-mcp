@@ -311,6 +311,40 @@ RSpec.describe GirbMcp::CodeSafetyAnalyzer do
 
       expect(result).to include("File.write/delete/unlink/rename, FileUtils")
     end
+
+    context "mutation-only compact format" do
+      it "uses compact Note format for single mutation match" do
+        warnings = [{ category: :mutation_operations, matches: [".save!"] }]
+        result = described_class.format_warnings(warnings)
+
+        expect(result).to start_with("Note:")
+        expect(result).to include("Data mutation detected (.save!)")
+        expect(result).to include("acknowledge_mutations")
+        expect(result).not_to include("WARNING:")
+      end
+
+      it "lists all matches in compact format for multiple mutation matches" do
+        warnings = [{ category: :mutation_operations, matches: [".save!", ".update"] }]
+        result = described_class.format_warnings(warnings)
+
+        expect(result).to start_with("Note:")
+        expect(result).to include(".save!, .update")
+        expect(result).not_to include("WARNING:")
+      end
+
+      it "uses verbose WARNING format when mutation is mixed with other categories" do
+        warnings = [
+          { category: :mutation_operations, matches: [".save!"] },
+          { category: :system_commands, matches: ["system()"] },
+        ]
+        result = described_class.format_warnings(warnings)
+
+        expect(result).to include("WARNING:")
+        expect(result).to include("Data mutation")
+        expect(result).to include("System command execution")
+        expect(result).not_to start_with("Note:")
+      end
+    end
   end
 
   describe ".filter_acknowledged" do

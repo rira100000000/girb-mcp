@@ -334,7 +334,7 @@ RSpec.describe GirbMcp::Tools::EvaluateCode do
         )
         text = response_text(response)
 
-        expect(text).to include("WARNING:")
+        expect(text).to include("Note:")
         expect(text).to include("Data mutation")
       end
     end
