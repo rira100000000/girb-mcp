@@ -145,6 +145,7 @@ The session manager also detects and cleans up sessions whose target process has
 | `get_context` | Local variables, instance variables, call stack, breakpoints |
 | `get_source` | Source code of a method or class |
 | `read_file` | Read source files with optional line range |
+| `list_files` | List files in a directory, with optional glob pattern |
 
 ### Execution Control
 
@@ -240,6 +241,40 @@ Agent: get_context()
 Agent: evaluate_code(code: "@user.attributes")
 Agent: continue_execution()
 ```
+
+### Debug a Dockerized Rails app
+
+**1. Configure the target app**
+
+Set up `docker-compose.yml` with debug environment variables:
+
+```yaml
+services:
+  web:
+    build: .
+    ports:
+      - "3000:3000"    # Rails
+      - "12345:12345"  # Debug
+    environment:
+      - RUBY_DEBUG_OPEN=true
+      - RUBY_DEBUG_HOST=0.0.0.0
+      - RUBY_DEBUG_PORT=12345
+```
+
+`RUBY_DEBUG_HOST=0.0.0.0` is required so the debugger listens on all interfaces inside the container.
+
+**2. Connect and debug**
+
+```
+Agent: connect(host: "localhost", port: 12345)
+Agent: set_breakpoint(file: "app/controllers/users_controller.rb", line: 15)
+Agent: trigger_request(method: "GET", url: "http://localhost:3000/users/1")
+Agent: get_context()
+Agent: evaluate_code(code: "@user.attributes")
+Agent: continue_execution()
+```
+
+When connected via TCP, `read_file` and `list_files` automatically operate through the debug session, so the agent can browse and read source files inside the container without local filesystem access.
 
 ### Connect to an existing breakpoint
 
