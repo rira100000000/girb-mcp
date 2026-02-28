@@ -2,9 +2,9 @@
 
 RSpec.describe GirbMcp::Server do
   describe "constants" do
-    it "has BASE_TOOLS with 18 tools" do
+    it "has BASE_TOOLS with 19 tools" do
       expect(GirbMcp::Server::BASE_TOOLS).to be_a(Array)
-      expect(GirbMcp::Server::BASE_TOOLS.size).to eq(18)
+      expect(GirbMcp::Server::BASE_TOOLS.size).to eq(19)
     end
 
     it "has RAILS_TOOLS with 3 tools" do
@@ -12,8 +12,8 @@ RSpec.describe GirbMcp::Server do
       expect(GirbMcp::Server::RAILS_TOOLS.size).to eq(3)
     end
 
-    it "has TOOLS combining both sets (21 total)" do
-      expect(GirbMcp::Server::TOOLS.size).to eq(21)
+    it "has TOOLS combining both sets (22 total)" do
+      expect(GirbMcp::Server::TOOLS.size).to eq(22)
       expect(GirbMcp::Server::TOOLS).to eq(
         GirbMcp::Server::BASE_TOOLS + GirbMcp::Server::RAILS_TOOLS
       )

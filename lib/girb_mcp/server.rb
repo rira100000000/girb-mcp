@@ -8,6 +8,7 @@ require_relative "tools/inspect_object"
 require_relative "tools/get_context"
 require_relative "tools/get_source"
 require_relative "tools/read_file"
+require_relative "tools/list_files"
 require_relative "tools/continue_execution"
 require_relative "tools/set_breakpoint"
 require_relative "tools/remove_breakpoint"
@@ -37,6 +38,7 @@ module GirbMcp
       Tools::GetContext,
       Tools::GetSource,
       Tools::ReadFile,
+      Tools::ListFiles,
       # Control
       Tools::SetBreakpoint,
       Tools::RemoveBreakpoint,
@@ -158,6 +160,7 @@ module GirbMcp
       - "See an object's full structure (class, ivars, value)" → inspect_object
       - "Read the source of a method or class" → get_source
       - "Read a file from the debugged process's machine" → read_file
+      - "List files or explore directory structure" → list_files
       - "Step to the next line (stay in current method)" → next
       - "Step into a method call" → step
       - "Run until current method/block returns" → finish
