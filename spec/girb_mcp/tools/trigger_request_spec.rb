@@ -186,6 +186,38 @@ RSpec.describe GirbMcp::Tools::TriggerRequest do
         expect(text).to include("Verify that the breakpoint file paths")
       end
 
+      it "shows running-process guidance when not paused on timeout" do
+        stub_const("GirbMcp::Tools::TriggerRequest::HTTP_JOIN_TIMEOUT", 0.1)
+
+        request_barrier = Queue.new
+        stub_http_response
+        allow(mock_http).to receive(:request) { request_barrier.pop }
+
+        # Process is not paused (e.g., after continue timeout)
+        not_paused_client = build_mock_client(paused: false)
+        allow(manager).to receive(:client).and_return(not_paused_client)
+        allow(not_paused_client).to receive(:wait_for_breakpoint).and_return({
+          type: :timeout,
+          output: "",
+        })
+
+        response = described_class.call(
+          method: "GET",
+          url: "http://localhost:3000/users",
+          server_context: server_context,
+        )
+
+        request_barrier << nil
+
+        text = response_text(response)
+
+        expect(text).to include("process is running")
+        expect(text).to include("set_breakpoint")
+        expect(text).to include("trigger_request")
+        expect(text).to include("disconnect")
+        expect(text).not_to include("get_context")
+      end
+
       it "shows no-breakpoints hint on timeout when none set" do
         stub_const("GirbMcp::Tools::TriggerRequest::HTTP_JOIN_TIMEOUT", 0.1)
 

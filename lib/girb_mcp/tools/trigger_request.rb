@@ -358,7 +358,11 @@ module GirbMcp
 
         # Build diagnostic info about current breakpoints for timeout/no-hit messages.
         def breakpoint_diagnostics(client)
-          return "Use 'get_context' to check the current debugger state.\n" unless client&.connected? && client.paused
+          unless client&.connected? && client.paused
+            return "The process is running and cannot be inspected directly.\n" \
+                   "To retry: verify breakpoint paths with 'set_breakpoint', then call 'trigger_request' again.\n" \
+                   "If the process seems stuck, use 'disconnect' to detach and 'connect' to re-attach.\n"
+          end
 
           bp_list = client.send_command("info breakpoints")
           cleaned = bp_list.strip
@@ -370,7 +374,8 @@ module GirbMcp
             "Verify that the breakpoint file paths match your request's code path.\n"
           end
         rescue GirbMcp::Error
-          "Use 'get_context' to check the current debugger state.\n"
+          "The process is running and cannot be inspected directly.\n" \
+          "To retry: verify breakpoint paths with 'set_breakpoint', then call 'trigger_request' again.\n"
         end
 
         # Snapshot the Rails log file position before the request.
