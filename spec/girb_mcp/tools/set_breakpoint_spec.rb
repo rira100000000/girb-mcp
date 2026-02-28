@@ -113,6 +113,22 @@ RSpec.describe GirbMcp::Tools::SetBreakpoint do
         expect(text).to include("duplicated")
       end
 
+      it "annotates duplicate breakpoint without BP id in fallback" do
+        allow(client).to receive(:send_command)
+          .with("break app/models/user.rb:10")
+          .and_return("BP - Line  app/models/user.rb:10 (duplicated)")
+
+        response = described_class.call(
+          file: "app/models/user.rb",
+          line: 10,
+          server_context: server_context,
+        )
+        text = response_text(response)
+        expect(text).to include("Already set: a breakpoint already exists")
+        expect(text).to include("No new breakpoint created")
+        expect(text).not_to include("breakpoint #")
+      end
+
       it "annotates return event warning" do
         allow(client).to receive(:send_command).and_return("#1  BP - Line  f.rb:10 (return)")
 
