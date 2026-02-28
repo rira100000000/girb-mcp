@@ -235,6 +235,10 @@ module GirbMcp
                        "set breakpoints and use 'trigger_request' again, " \
                        "or use 'connect' to reconnect (current session will be replaced)."
 
+        RUNNING_DIAGNOSTICS_HINT = "The process is running and cannot be inspected directly.\n" \
+                                   "To retry: verify breakpoint paths with 'set_breakpoint', then call 'trigger_request' again.\n" \
+                                   "If the process seems stuck, use 'disconnect' to detach and 'connect' to re-attach.\n"
+
         def build_http_done_response(method, url, http_holder, client: nil)
           if http_holder[:error]
             text = "HTTP #{method} #{url}\n\nRequest error: #{http_holder[:error].message}\n\n#{RUNNING_HINT}"
@@ -358,11 +362,7 @@ module GirbMcp
 
         # Build diagnostic info about current breakpoints for timeout/no-hit messages.
         def breakpoint_diagnostics(client)
-          unless client&.connected? && client.paused
-            return "The process is running and cannot be inspected directly.\n" \
-                   "To retry: verify breakpoint paths with 'set_breakpoint', then call 'trigger_request' again.\n" \
-                   "If the process seems stuck, use 'disconnect' to detach and 'connect' to re-attach.\n"
-          end
+          return RUNNING_DIAGNOSTICS_HINT unless client&.connected? && client.paused
 
           bp_list = client.send_command("info breakpoints")
           cleaned = bp_list.strip
@@ -374,8 +374,7 @@ module GirbMcp
             "Verify that the breakpoint file paths match your request's code path.\n"
           end
         rescue GirbMcp::Error
-          "The process is running and cannot be inspected directly.\n" \
-          "To retry: verify breakpoint paths with 'set_breakpoint', then call 'trigger_request' again.\n"
+          RUNNING_DIAGNOSTICS_HINT
         end
 
         # Snapshot the Rails log file position before the request.
