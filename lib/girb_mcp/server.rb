@@ -164,6 +164,10 @@ module GirbMcp
       - "Resume until next breakpoint" → continue_execution
       - "Send an HTTP request and wait for breakpoint" → trigger_request
 
+      Breakpoints in blocks/loops (each, map, select, etc.):
+      Line breakpoints inside a block fire on EVERY iteration. If you only need to stop once, \
+      use one_shot: true when setting the breakpoint — it auto-removes after the first hit.
+
       Typical pattern for Rails debugging:
       set_breakpoint → trigger_request → get_context → evaluate_code → continue_execution
     TEXT
