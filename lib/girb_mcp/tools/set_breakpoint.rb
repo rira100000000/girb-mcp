@@ -93,6 +93,15 @@ module GirbMcp
           output = client.send_command(command)
           output = GirbMcp::StopEventAnnotator.annotate_breakpoint_set(output)
 
+          # Detect line adjustment by debug gem
+          if (bp_match = output.match(/#\d+\s+BP - Line\s+.+:(\d+)/))
+            actual_line = bp_match[1].to_i
+            if actual_line != line
+              output += "\n\nNote: Breakpoint was set on line #{actual_line} instead of the requested " \
+                        "line #{line}. The debugger adjusted to the nearest breakable line."
+            end
+          end
+
           # Record for preservation across sessions (skip one-shot breakpoints)
           manager.record_breakpoint(command) unless one_shot
 

@@ -67,6 +67,36 @@ RSpec.describe GirbMcp::Tools::SetBreakpoint do
         )
       end
 
+      it "does not add note when line matches" do
+        allow(client).to receive(:send_command)
+          .with("break app/models/user.rb:10")
+          .and_return("#1  BP - Line  app/models/user.rb:10 (line)")
+
+        response = described_class.call(
+          file: "app/models/user.rb",
+          line: 10,
+          server_context: server_context,
+        )
+        text = response_text(response)
+        expect(text).not_to include("Note:")
+        expect(text).not_to include("adjusted")
+      end
+
+      it "adds note when debug gem adjusts line number" do
+        allow(client).to receive(:send_command)
+          .with("break app/models/user.rb:14")
+          .and_return("#1  BP - Line  app/models/user.rb:26 (line)")
+
+        response = described_class.call(
+          file: "app/models/user.rb",
+          line: 14,
+          server_context: server_context,
+        )
+        text = response_text(response)
+        expect(text).to include("Note: Breakpoint was set on line 26 instead of the requested line 14")
+        expect(text).to include("nearest breakable line")
+      end
+
       it "annotates return event warning" do
         allow(client).to receive(:send_command).and_return("#1  BP - Line  f.rb:10 (return)")
 
