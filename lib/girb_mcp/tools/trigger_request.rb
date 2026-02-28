@@ -98,6 +98,13 @@ module GirbMcp
           log_capture = nil
           begin
             client = manager.client(session_id)
+            # Recover paused state if a previous timeout left @paused=false
+            # while the process is actually still paused in the debugger.
+            begin
+              client.auto_repause!
+            rescue GirbMcp::Error
+              # Best-effort: proceed with current paused state
+            end
             # Only send debug commands if the process is paused (at an input prompt).
             # After a continue_execution timeout, the process is running and sending
             # commands would violate the debug protocol, causing connection loss.

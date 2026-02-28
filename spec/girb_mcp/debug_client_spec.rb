@@ -696,6 +696,7 @@ RSpec.describe GirbMcp::DebugClient do
       allow(http_double).to receive(:open_timeout=)
       allow(http_double).to receive(:read_timeout=)
       allow(http_double).to receive(:get) { bp_written.pop; Net::HTTPResponse }
+      allow(http_double).to receive(:finish)
 
       allow(Process).to receive(:kill).with("URG", 12345)
       Thread.new do
@@ -735,6 +736,7 @@ RSpec.describe GirbMcp::DebugClient do
       allow(http_double).to receive(:open_timeout=)
       allow(http_double).to receive(:read_timeout=)
       allow(http_double).to receive(:get).and_return(Net::HTTPResponse)
+      allow(http_double).to receive(:finish)
 
       server_thread = Thread.new do
         Thread.current.report_on_exception = false

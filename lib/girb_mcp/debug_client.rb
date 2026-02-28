@@ -18,7 +18,7 @@ module GirbMcp
 
     attr_reader :pid, :connected, :paused, :trap_context, :remote, :port
     attr_accessor :stderr_file, :stdout_file, :wait_thread, :script_file, :script_args, :pending_http,
-      :listen_ports, :escape_target
+      :listen_ports, :escape_target, :suspended_catch_bps
 
     def initialize
       @socket = nil
@@ -33,6 +33,7 @@ module GirbMcp
       @one_shot_breakpoints = Set.new
       @listen_ports = []
       @escape_target = nil
+      @suspended_catch_bps = []
     end
 
     def connected?
@@ -113,6 +114,7 @@ module GirbMcp
       @pending_http = nil
       @listen_ports = []
       @escape_target = nil
+      @suspended_catch_bps = []
       cleanup_captured_files
     end
 
@@ -373,6 +375,7 @@ module GirbMcp
     def auto_repause!
       return false if @paused
 
+      debug_log("auto_repause!: starting (paused=#{@paused}, trap=#{@trap_context})")
       result = repause(timeout: 3)
       if result.nil?
         if @remote
@@ -393,10 +396,14 @@ module GirbMcp
         end
       end
 
+      debug_log("auto_repause!: repause done (paused=#{@paused}, trap=#{@trap_context})")
+
       # After repause via SIGURG, the process is in trap context.
       # Auto-escape if we have cached escape target and listen ports.
       if @trap_context && @listen_ports&.any? && @escape_target
+        debug_log("auto_repause!: attempting trap escape (trap=#{@trap_context})")
         attempt_trap_escape!
+        debug_log("auto_repause!: after trap escape (trap=#{@trap_context})")
       end
 
       true
@@ -428,6 +435,7 @@ module GirbMcp
         # Step 1: Drain buffered data — a breakpoint may have been hit but
         # the `input PID` wasn't consumed (e.g., after continue_and_wait timeout).
         drain_socket_buffer
+        debug_log("repause: after drain_socket_buffer (paused=#{@paused})")
 
         return "" if @paused
 
@@ -438,14 +446,17 @@ module GirbMcp
         # target process (PID is in a different namespace), so use the `pause`
         # protocol message which the debug gem server sends as SIGURG to itself.
         if @remote
+          debug_log("repause: sending pause message (remote)")
           @socket.write("pause #{@pid}\n".b)
           @socket.flush
         else
+          debug_log("repause: sending SIGURG (local)")
           Process.kill("URG", @pid.to_i)
         end
 
         # Step 3: Wait for `input PID` prompt
         result = wait_for_pause(timeout)
+        debug_log("repause: wait_for_pause result=#{result.nil? ? 'nil' : 'ok'}")
 
         # SIGURG puts the process in signal trap context. Mark it so callers
         # can adapt (e.g., avoid `require` or Mutex operations that hang in
@@ -575,20 +586,25 @@ module GirbMcp
       port = @listen_ports.first
 
       # Set a temporary breakpoint
+      debug_log("attempt_trap_escape!: setting BP at #{file}:#{line}")
       bp_output = send_command("break #{file}:#{line}")
       bp_match = bp_output.match(/#(\d+)/)
       return unless bp_match
 
       bp_number = bp_match[1].to_i
 
-      # Send GET request in background thread and wait for breakpoint
+      # Send GET request in background thread and wait for breakpoint.
+      # Use a short read_timeout (3s) to avoid occupying a Puma worker for too long.
+      # In single-worker configs, a long timeout blocks subsequent requests.
       url = "http://127.0.0.1:#{port}#{path}"
       http_done = false
+      http_ref = nil
       http_thread = Thread.new do
         uri = URI.parse(url)
         http = Net::HTTP.new(uri.host, uri.port)
         http.open_timeout = 5
-        http.read_timeout = 10
+        http.read_timeout = 3
+        http_ref = http
         http.get(uri.request_uri)
       rescue StandardError
         # Ignore HTTP errors — we only care about triggering the breakpoint
@@ -596,8 +612,17 @@ module GirbMcp
         http_done = true
       end
 
+      debug_log("attempt_trap_escape!: sending HTTP GET to #{url}")
       result = continue_and_wait(timeout: 10) { http_done }
-      http_thread.join(1)
+      debug_log("attempt_trap_escape!: continue_and_wait result=#{result[:type]}")
+
+      # Close HTTP connection immediately to free the Puma worker
+      begin
+        http_ref&.finish
+      rescue StandardError
+        # ignore
+      end
+      http_thread.join(2)
 
       if result[:type] == :breakpoint
         @trap_context = false
@@ -875,6 +900,7 @@ module GirbMcp
       end
 
       if last_input_pid
+        debug_log("drain_stale_data: found stale input PID=#{last_input_pid}, setting paused=true")
         @pid = last_input_pid
         @paused = true
       end

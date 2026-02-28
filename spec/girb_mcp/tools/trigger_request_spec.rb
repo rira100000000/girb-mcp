@@ -321,6 +321,45 @@ RSpec.describe GirbMcp::Tools::TriggerRequest do
 
         expect(text).to include("Debug session lost")
       end
+
+      it "calls auto_repause! before checking paused state" do
+        stub_http_response
+
+        allow(client).to receive(:ensure_paused).and_return("")
+        allow(client).to receive(:continue_and_wait).and_return({
+          type: :interrupted, output: "",
+        })
+
+        described_class.call(
+          method: "GET",
+          url: "http://localhost:3000/users",
+          server_context: server_context,
+        )
+
+        expect(client).to have_received(:auto_repause!)
+      end
+
+      it "proceeds normally when auto_repause! fails" do
+        stub_http_response
+
+        allow(client).to receive(:auto_repause!).and_raise(
+          GirbMcp::ConnectionError, "repause failed",
+        )
+        allow(client).to receive(:ensure_paused).and_return("")
+        allow(client).to receive(:continue_and_wait).and_return({
+          type: :interrupted, output: "",
+        })
+
+        response = described_class.call(
+          method: "GET",
+          url: "http://localhost:3000/users",
+          server_context: server_context,
+        )
+        text = response_text(response)
+
+        # Should still succeed with HTTP response
+        expect(text).to include("200")
+      end
     end
 
     context "Content-Type auto-detection" do

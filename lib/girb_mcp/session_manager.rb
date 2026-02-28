@@ -392,7 +392,7 @@ module GirbMcp
       if remaining > 0
         begin
           info.client.send_command(
-            '$stdout = $__girb_old if defined?($__girb_old) && $__girb_old',
+            '$stdout = STDOUT if $stdout != STDOUT',
             timeout: [remaining, 1].min,
           )
         rescue GirbMcp::Error

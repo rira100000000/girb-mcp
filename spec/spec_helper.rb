@@ -36,6 +36,7 @@ def build_mock_client(connected: true, pid: "12345", paused: true, trap_context:
     pending_http: nil,
     listen_ports: [],
     escape_target: nil,
+    suspended_catch_bps: [],
   )
   allow(client).to receive(:send_command).and_return("")
   allow(client).to receive(:send_command_no_wait)
@@ -58,6 +59,7 @@ def build_mock_client(connected: true, pid: "12345", paused: true, trap_context:
   allow(client).to receive(:pending_http=)
   allow(client).to receive(:listen_ports=)
   allow(client).to receive(:escape_target=)
+  allow(client).to receive(:suspended_catch_bps=)
   client
 end
 

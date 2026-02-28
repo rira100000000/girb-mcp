@@ -70,6 +70,21 @@ module GirbMcp
           suspended_catch_bps = []
 
           begin
+            # Proactive recovery: if a previous timeout left $stdout redirected
+            # to StringIO, restore it to the original STDOUT constant (immutable).
+            begin
+              client.send_command('$stdout = STDOUT if $stdout != STDOUT')
+            rescue GirbMcp::Error
+              # Best-effort
+            end
+
+            # Proactive recovery: if a previous timeout left catch breakpoints
+            # suspended (deleted but not restored), recreate them now.
+            if client.suspended_catch_bps&.any?
+              restore_catch_breakpoints(client, client.suspended_catch_bps)
+              client.suspended_catch_bps = []
+            end
+
             # Temporarily disable catch breakpoints to prevent them from
             # firing on exceptions raised during code evaluation
             suspended_catch_bps = suspend_catch_breakpoints(client)
@@ -78,7 +93,7 @@ module GirbMcp
             # Use StringIO directly (always available in debug gem sessions)
             # instead of `require "stringio"` which hangs in trap context.
             client.send_command(
-              '$__girb_cap = StringIO.new; $__girb_old = $stdout; $stdout = $__girb_cap',
+              '$__girb_cap = StringIO.new; $stdout = $__girb_cap',
             )
             stdout_redirected = true
 
@@ -141,9 +156,13 @@ module GirbMcp
             MCP::Tool::Response.new([{ type: "text", text: text }])
           ensure
             if stdout_redirected
-              client.send_command('$stdout = $__girb_old if defined?($__girb_old)') rescue nil
+              client.send_command('$stdout = STDOUT') rescue nil
             end
+            # Save suspended catch BPs to client so they can be proactively
+            # restored on the next evaluate_code call if this restore fails.
+            client.suspended_catch_bps = suspended_catch_bps if suspended_catch_bps.any?
             restore_catch_breakpoints(client, suspended_catch_bps)
+            client.suspended_catch_bps = []
           end
         end
 
@@ -218,7 +237,7 @@ module GirbMcp
         # Restore $stdout and read captured output in a single command.
         # Combines two round-trips into one.
         def restore_and_read_stdout(client)
-          result = client.send_command("$stdout = $__girb_old; p $__girb_cap.string")
+          result = client.send_command("$stdout = STDOUT; p $__girb_cap.string")
           parse_captured_stdout(result)
         rescue GirbMcp::Error
           nil
@@ -251,7 +270,7 @@ module GirbMcp
 
         # Prepend frame info if the debugger is not at frame 0 (i.e., after up/down).
         def append_frame_info(client, text)
-          frame_output = client.send_command("frame")
+          frame_output = client.send_command("frame", timeout: 3)
           # Debug gem output: "#1  ClassName#method at /path/to/file.rb:10" or similar
           if (match = frame_output.match(/#(\d+)\s+(.+)/))
             frame_num = match[1].to_i
