@@ -265,7 +265,7 @@ services:
 Agent: connect(port: 12345)
 ```
 
-TCP経由で接続すると、`read_file` と `list_files` は自動的にデバッグセッション経由で動作するため、ローカルにソースコードがなくてもコンテナ内のファイルを閲覧・読み取りできます。
+ローカルにソースコードがなくても、エージェントがコンテナ内のファイルを閲覧・読み取りできます。
 
 #### Option B: Unixソケットボリュームマウント（推奨）
 
@@ -288,10 +288,8 @@ volumes:
 ```
 
 ```
-Agent: connect(path: "/path/to/debug_sock/rdbg.sock", remote: true)
+Agent: connect(path: "/path/to/debug_sock/rdbg.sock")
 ```
-
-`remote: true` が必要です。ソケットはローカルですが、プロセスはコンテナ内で動作しているため、シグナルがPID名前空間を越えられません。
 
 ### 既存のブレークポイントに接続
 
@@ -304,7 +302,6 @@ rdbg --open my_app.rb
 Agent: list_debug_sessions()
 Agent: connect(path: "/tmp/rdbg-1000/rdbg-12345")
 Agent: get_context()
-Agent: evaluate_code(code: "local_variables.map { |v| [v, binding.local_variable_get(v)] }.to_h")
 ```
 
 ## 仕組み
@@ -321,6 +318,14 @@ Agent: evaluate_code(code: "local_variables.map { |v| [v, binding.local_variable
 3. girb-mcpがdebug gemのワイヤープロトコルでそのソケットに接続
 4. MCPツール呼び出しがデバッガコマンドに変換され、結果が返される
 5. アイドル状態のセッションは設定可能なタイムアウト後に自動クリーンアップされる
+
+## セキュリティ
+
+girb-mcpはデバッグツールであり、実行中のRubyプロセスへの深いランタイムアクセスを提供します。
+
+**専用ツールにより任意コード実行を最小化。** 変数の確認・ソースコードの閲覧・モデル構造の調査など、ほとんどのデバッグ操作は任意コードを実行しない専用ツールで行われます。ランタイム検査用に`evaluate_code`も利用可能で、危険な操作に対しては組み込みの安全性チェッカーが警告します。
+
+**debug gemには認証機能がありません。** デバッグソケットにアクセスできれば、対象プロセスで任意のコードを実行できます。必ずlocalhost（`127.0.0.1`）にバインドするか、Unixソケットを使用してください。具体的な設定例は[Docker節](#docker内のrailsアプリをデバッグ)を参照してください。
 
 ## girbファミリー
 

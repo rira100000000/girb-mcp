@@ -267,7 +267,7 @@ services:
 Agent: connect(port: 12345)
 ```
 
-When connected via TCP, `read_file` and `list_files` automatically operate through the debug session, so the agent can browse and read source files inside the container without local filesystem access.
+The agent can read source files inside the container — no local copy of the source code is needed.
 
 #### Option B: Unix socket volume mount (recommended)
 
@@ -290,10 +290,8 @@ volumes:
 ```
 
 ```
-Agent: connect(path: "/path/to/debug_sock/rdbg.sock", remote: true)
+Agent: connect(path: "/path/to/debug_sock/rdbg.sock")
 ```
-
-`remote: true` is required because the socket is local but the process runs inside the container (signals cannot cross PID namespaces).
 
 ### Connect to an existing breakpoint
 
@@ -306,7 +304,6 @@ rdbg --open my_app.rb
 Agent: list_debug_sessions()
 Agent: connect(path: "/tmp/rdbg-1000/rdbg-12345")
 Agent: get_context()
-Agent: evaluate_code(code: "local_variables.map { |v| [v, binding.local_variable_get(v)] }.to_h")
 ```
 
 ## How it works
@@ -323,6 +320,14 @@ Agent: evaluate_code(code: "local_variables.map { |v| [v, binding.local_variable
 3. girb-mcp connects to that socket using the debug gem's wire protocol
 4. MCP tool calls are translated to debugger commands and results are returned
 5. Idle sessions are automatically cleaned up after a configurable timeout
+
+## Security
+
+girb-mcp is a debugging tool that intentionally provides deep runtime access. Here's what you should know:
+
+**Structured tools minimize arbitrary code execution.** Most debugging tasks — viewing variables, reading source code, inspecting model structure — are handled by dedicated tools that don't run arbitrary code. `evaluate_code` is available for runtime inspection, and a built-in safety checker warns about dangerous operations.
+
+**The debug gem has no authentication.** Anyone who can reach the debug socket can execute arbitrary code in the target process. Always bind to localhost (`127.0.0.1`) or use Unix sockets. See the [Docker section](#debug-a-dockerized-rails-app) for configuration examples.
 
 ## Part of the girb family
 
