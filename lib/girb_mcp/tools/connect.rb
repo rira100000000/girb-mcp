@@ -33,7 +33,7 @@ module GirbMcp
           },
           host: {
             type: "string",
-            description: "TCP host for remote debug connection (default: localhost)",
+            description: "TCP host for the debug connection (default: localhost)",
           },
           port: {
             type: "integer",
@@ -49,6 +49,15 @@ module GirbMcp
                          "Useful when reconnecting to debug the same code with identical breakpoints. " \
                          "Default: false (starts fresh without inheriting previous breakpoints).",
           },
+          remote: {
+            type: "boolean",
+            description: "Set to true when the target process is in a different PID namespace " \
+                         "(e.g., Docker container connected via Unix socket volume mount). " \
+                         "Required because OS signals cannot cross PID namespaces — without this, " \
+                         "pause/resume will fail. " \
+                         "Not needed for TCP connections (auto-detected) or local Unix sockets. " \
+                         "Default: auto-detect (TCP → true, Unix socket → false).",
+          },
           auto_escape: {
             type: "boolean",
             description: "If false, skip automatic trap context escape. " \
@@ -58,8 +67,8 @@ module GirbMcp
       )
 
       class << self
-        def call(path: nil, host: nil, port: nil, session_id: nil, restore_breakpoints: nil,
-                 auto_escape: nil, server_context:)
+        def call(path: nil, host: nil, port: nil, session_id: nil, remote: nil,
+                 restore_breakpoints: nil, auto_escape: nil, server_context:)
           manager = server_context[:session_manager]
 
           # Clear saved breakpoints unless explicitly restoring
@@ -81,6 +90,7 @@ module GirbMcp
             path: path,
             host: host,
             port: port,
+            remote: remote,
             connect_timeout: connect_timeout,
             pre_cleanup_pid: pre_target_pid,
             pre_cleanup_port: port,

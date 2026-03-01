@@ -69,6 +69,38 @@ RSpec.describe GirbMcp::SessionManager do
     end
   end
 
+  describe "#connect (remote: passthrough)" do
+    it "passes remote: true to DebugClient#connect" do
+      new_client = build_mock_client(pid: "500")
+      allow(GirbMcp::DebugClient).to receive(:new).and_return(new_client)
+      allow(new_client).to receive(:connect).and_return({ success: true, pid: "500", output: "ok" })
+
+      manager.connect(remote: true)
+
+      expect(new_client).to have_received(:connect).with(hash_including(remote: true))
+    end
+
+    it "passes remote: false to DebugClient#connect" do
+      new_client = build_mock_client(pid: "500")
+      allow(GirbMcp::DebugClient).to receive(:new).and_return(new_client)
+      allow(new_client).to receive(:connect).and_return({ success: true, pid: "500", output: "ok" })
+
+      manager.connect(remote: false)
+
+      expect(new_client).to have_received(:connect).with(hash_including(remote: false))
+    end
+
+    it "passes remote: nil by default" do
+      new_client = build_mock_client(pid: "500")
+      allow(GirbMcp::DebugClient).to receive(:new).and_return(new_client)
+      allow(new_client).to receive(:connect).and_return({ success: true, pid: "500", output: "ok" })
+
+      manager.connect
+
+      expect(new_client).to have_received(:connect).with(hash_including(remote: nil))
+    end
+  end
+
   describe "#connect (pre_cleanup)" do
     it "disconnects existing session with the same PID before connecting" do
       old_client = build_mock_client(pid: "100")

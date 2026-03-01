@@ -3,7 +3,7 @@ services:
     build: .
     ports:
       - "3000:3000"
-      - "12345:12345"
+      - "127.0.0.1:12345:12345"
     environment:
       - RUBY_DEBUG_OPEN=true
       - RUBY_DEBUG_HOST=0.0.0.0

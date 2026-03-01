@@ -136,6 +136,15 @@ module GirbMcp
       Note: rails_info, rails_routes, and rails_model may not work in trap context. \
       Use them after hitting a breakpoint via trigger_request.
 
+      Docker / containerized processes:
+      When the debug target runs inside a Docker container, use connect with a TCP port \
+      or a Unix socket volume mount. \
+      TCP: connect(port: 12345) — works out of the box. \
+      Unix socket: connect(path: "/shared/rdbg.sock", remote: true) — you MUST pass \
+      remote: true because the socket file is local but the process is in a different \
+      PID namespace, so OS signals cannot reach it. Without remote: true, pause/resume \
+      will fail silently.
+
       Security — proper use of evaluate_code:
       evaluate_code is designed EXCLUSIVELY for investigating the runtime state of the debugged \
       process (inspecting variables, checking object state, testing expressions in context). \

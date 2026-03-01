@@ -36,7 +36,7 @@ module GirbMcp
     #   establishing a new connection. Essential for TCP/Docker reconnections where
     #   the target PID is unknown until after connecting (unlike Unix sockets where
     #   the PID is encoded in the socket filename).
-    def connect(session_id: nil, path: nil, host: nil, port: nil,
+    def connect(session_id: nil, path: nil, host: nil, port: nil, remote: nil,
                 connect_timeout: nil, pre_cleanup_pid: nil, pre_cleanup_port: nil, &on_initial_timeout)
       # Pre-cleanup: disconnect existing sessions for the same PID/session_id/port
       # BEFORE establishing a new connection. The old session's socket occupies
@@ -44,7 +44,7 @@ module GirbMcp
       pre_cleanup(session_id: session_id, pid: pre_cleanup_pid, port: pre_cleanup_port)
 
       client = DebugClient.new
-      result = client.connect(path: path, host: host, port: port,
+      result = client.connect(path: path, host: host, port: port, remote: remote,
                               connect_timeout: connect_timeout, &on_initial_timeout)
 
       now = Time.now

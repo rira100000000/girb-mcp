@@ -47,20 +47,20 @@ module GirbMcp
     # gem's pending pause (set by the SIGURG from greeting) can fire.
     # If the block is given and the initial read times out, the block is called
     # and read_until_input is retried once with a 10s timeout.
-    def connect(path: nil, host: nil, port: nil, connect_timeout: nil, &on_initial_timeout)
+    def connect(path: nil, host: nil, port: nil, remote: nil, connect_timeout: nil, &on_initial_timeout)
       disconnect if connected?
 
       if path
         @socket = Socket.unix(path)
-        @remote = false
+        @remote = remote.nil? ? false : remote
       elsif port
         @socket = Socket.tcp(host || "localhost", port.to_i)
-        @remote = true
+        @remote = remote.nil? ? true : remote
         @port = port.to_i
       else
         path = discover_socket
         @socket = Socket.unix(path)
-        @remote = false
+        @remote = remote.nil? ? false : remote
       end
 
       # The debug gem protocol: client sends greeting first, then reads server output

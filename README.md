@@ -244,37 +244,56 @@ Agent: continue_execution()
 
 ### Debug a Dockerized Rails app
 
-**1. Configure the target app**
+> **Security note:** The debug gem has no authentication. Anyone who can reach the debug port can execute arbitrary code inside the container. Always restrict access as shown below.
 
-Set up `docker-compose.yml` with debug environment variables:
+#### Option A: Localhost-only TCP (simple)
+
+Expose the debug port bound to `127.0.0.1` so only local processes can connect:
 
 ```yaml
 services:
   web:
     build: .
     ports:
-      - "3000:3000"    # Rails
-      - "12345:12345"  # Debug
+      - "3000:3000"
+      - "127.0.0.1:12345:12345"  # localhost only
     environment:
       - RUBY_DEBUG_OPEN=true
       - RUBY_DEBUG_HOST=0.0.0.0
       - RUBY_DEBUG_PORT=12345
 ```
 
-`RUBY_DEBUG_HOST=0.0.0.0` is required so the debugger listens on all interfaces inside the container.
-
-**2. Connect and debug**
-
 ```
-Agent: connect(host: "localhost", port: 12345)
-Agent: set_breakpoint(file: "app/controllers/users_controller.rb", line: 15)
-Agent: trigger_request(method: "GET", url: "http://localhost:3000/users/1")
-Agent: get_context()
-Agent: evaluate_code(code: "@user.attributes")
-Agent: continue_execution()
+Agent: connect(port: 12345)
 ```
 
 When connected via TCP, `read_file` and `list_files` automatically operate through the debug session, so the agent can browse and read source files inside the container without local filesystem access.
+
+#### Option B: Unix socket volume mount (recommended)
+
+Mount a shared directory for the debug socket. No port exposure needed:
+
+```yaml
+services:
+  web:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - RUBY_DEBUG_OPEN=true
+      - RUBY_DEBUG_SOCK_PATH=/debug/rdbg.sock
+    volumes:
+      - debug_sock:/debug
+
+volumes:
+  debug_sock:
+```
+
+```
+Agent: connect(path: "/path/to/debug_sock/rdbg.sock", remote: true)
+```
+
+`remote: true` is required because the socket is local but the process runs inside the container (signals cannot cross PID namespaces).
 
 ### Connect to an existing breakpoint
 

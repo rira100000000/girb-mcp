@@ -47,6 +47,31 @@ RSpec.describe GirbMcp::Tools::Connect do
       )
     end
 
+    it "passes remote: true to manager.connect" do
+      expect(manager).to receive(:connect) do |**kwargs, &_block|
+        expect(kwargs).to include(remote: true)
+        { success: true, pid: "12345", output: "ok", session_id: "session_12345" }
+      end
+
+      described_class.call(
+        path: "/tmp/rdbg.sock",
+        remote: true,
+        server_context: server_context,
+      )
+    end
+
+    it "passes remote: nil by default" do
+      expect(manager).to receive(:connect) do |**kwargs, &_block|
+        expect(kwargs).to include(remote: nil)
+        { success: true, pid: "12345", output: "ok", session_id: "session_12345" }
+      end
+
+      described_class.call(
+        path: "/tmp/rdbg.sock",
+        server_context: server_context,
+      )
+    end
+
     it "passes pre_cleanup_pid from resolved target PID" do
       allow(GirbMcp::DebugClient).to receive(:extract_pid)
         .with("/tmp/rdbg-1000/rdbg-99999")

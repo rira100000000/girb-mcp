@@ -242,37 +242,56 @@ Agent: continue_execution()
 
 ### Docker内のRailsアプリをデバッグ
 
-**1. 対象アプリの設定**
+> **セキュリティ注意:** debug gemには認証機能がありません。デバッグポートにアクセスできれば、誰でもコンテナ内で任意のコードを実行できます。以下のようにアクセスを制限してください。
 
-`docker-compose.yml` にデバッグ用の環境変数を設定：
+#### Option A: localhost限定TCP（シンプル）
+
+デバッグポートを `127.0.0.1` にバインドし、ローカルプロセスのみ接続可能にします：
 
 ```yaml
 services:
   web:
     build: .
     ports:
-      - "3000:3000"    # Rails
-      - "12345:12345"  # デバッグ
+      - "3000:3000"
+      - "127.0.0.1:12345:12345"  # localhostのみ
     environment:
       - RUBY_DEBUG_OPEN=true
       - RUBY_DEBUG_HOST=0.0.0.0
       - RUBY_DEBUG_PORT=12345
 ```
 
-`RUBY_DEBUG_HOST=0.0.0.0` はコンテナ内で全インターフェースからの接続を受け付けるために必要です。
-
-**2. 接続してデバッグ**
-
 ```
-Agent: connect(host: "localhost", port: 12345)
-Agent: set_breakpoint(file: "app/controllers/users_controller.rb", line: 15)
-Agent: trigger_request(method: "GET", url: "http://localhost:3000/users/1")
-Agent: get_context()
-Agent: evaluate_code(code: "@user.attributes")
-Agent: continue_execution()
+Agent: connect(port: 12345)
 ```
 
 TCP経由で接続すると、`read_file` と `list_files` は自動的にデバッグセッション経由で動作するため、ローカルにソースコードがなくてもコンテナ内のファイルを閲覧・読み取りできます。
+
+#### Option B: Unixソケットボリュームマウント（推奨）
+
+デバッグソケット用の共有ディレクトリをマウントします。ポート公開は不要です：
+
+```yaml
+services:
+  web:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - RUBY_DEBUG_OPEN=true
+      - RUBY_DEBUG_SOCK_PATH=/debug/rdbg.sock
+    volumes:
+      - debug_sock:/debug
+
+volumes:
+  debug_sock:
+```
+
+```
+Agent: connect(path: "/path/to/debug_sock/rdbg.sock", remote: true)
+```
+
+`remote: true` が必要です。ソケットはローカルですが、プロセスはコンテナ内で動作しているため、シグナルがPID名前空間を越えられません。
 
 ### 既存のブレークポイントに接続
 

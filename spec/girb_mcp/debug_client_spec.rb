@@ -316,6 +316,79 @@ RSpec.describe GirbMcp::DebugClient do
     [client, server_sock]
   end
 
+  describe "#connect (remote: override)" do
+    def connect_with_socket(client, server_sock, **kwargs)
+      allow(client).to receive(:send_greeting)
+
+      Thread.new do
+        sleep 0.05
+        server_sock.write("input 12345\n")
+      end
+
+      client.connect(**kwargs, connect_timeout: 2)
+    end
+
+    it "auto-detects remote=false for Unix socket path" do
+      client_sock, server_sock = Socket.pair(:UNIX, :STREAM, 0)
+      client = GirbMcp::DebugClient.new
+      allow(Socket).to receive(:unix).and_return(client_sock)
+
+      connect_with_socket(client, server_sock, path: "/tmp/rdbg.sock")
+      expect(client.remote).to be false
+    ensure
+      client_sock&.close rescue nil
+      server_sock&.close rescue nil
+    end
+
+    it "auto-detects remote=true for TCP port" do
+      client_sock, server_sock = Socket.pair(:UNIX, :STREAM, 0)
+      client = GirbMcp::DebugClient.new
+      allow(Socket).to receive(:tcp).and_return(client_sock)
+
+      connect_with_socket(client, server_sock, port: 12345)
+      expect(client.remote).to be true
+    ensure
+      client_sock&.close rescue nil
+      server_sock&.close rescue nil
+    end
+
+    it "overrides to remote=true for Unix socket when remote: true" do
+      client_sock, server_sock = Socket.pair(:UNIX, :STREAM, 0)
+      client = GirbMcp::DebugClient.new
+      allow(Socket).to receive(:unix).and_return(client_sock)
+
+      connect_with_socket(client, server_sock, path: "/tmp/rdbg.sock", remote: true)
+      expect(client.remote).to be true
+    ensure
+      client_sock&.close rescue nil
+      server_sock&.close rescue nil
+    end
+
+    it "overrides to remote=false for TCP port when remote: false" do
+      client_sock, server_sock = Socket.pair(:UNIX, :STREAM, 0)
+      client = GirbMcp::DebugClient.new
+      allow(Socket).to receive(:tcp).and_return(client_sock)
+
+      connect_with_socket(client, server_sock, port: 12345, remote: false)
+      expect(client.remote).to be false
+    ensure
+      client_sock&.close rescue nil
+      server_sock&.close rescue nil
+    end
+
+    it "preserves auto-detection when remote: nil" do
+      client_sock, server_sock = Socket.pair(:UNIX, :STREAM, 0)
+      client = GirbMcp::DebugClient.new
+      allow(Socket).to receive(:tcp).and_return(client_sock)
+
+      connect_with_socket(client, server_sock, port: 12345, remote: nil)
+      expect(client.remote).to be true
+    ensure
+      client_sock&.close rescue nil
+      server_sock&.close rescue nil
+    end
+  end
+
   describe "#connect (wake callback)" do
     it "calls on_initial_timeout block on first timeout and retries successfully" do
       client_sock, server_sock = Socket.pair(:UNIX, :STREAM, 0)
