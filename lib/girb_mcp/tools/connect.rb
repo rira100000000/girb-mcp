@@ -87,12 +87,13 @@ module GirbMcp
                 begin
                   existing_client.auto_repause!
                 rescue GirbMcp::Error
-                  # auto_repause failed — try HTTP wake + repause as last resort
+                  # auto_repause failed — try HTTP wake + check_paused as last resort
+                  # (auto_repause already sent the pause message — avoid sending more)
                   if existing_client.remote && existing_client.listen_ports&.any?
                     begin
                       existing_client.wake_io_blocked_process(existing_client.listen_ports.first)
                       sleep DebugClient::HTTP_WAKE_SETTLE_TIME
-                      existing_client.repause(timeout: 5)
+                      existing_client.check_paused(timeout: 5)
                     rescue GirbMcp::Error
                       # Best-effort
                     end

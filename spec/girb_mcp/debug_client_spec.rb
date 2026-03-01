@@ -664,21 +664,19 @@ RSpec.describe GirbMcp::DebugClient do
       )
     end
 
-    it "retries repause for remote clients instead of SIGINT" do
+    it "retries with check_paused for remote clients instead of SIGINT" do
       client, server = setup_client_with_socket
       client.instance_variable_set(:@paused, false)
       client.instance_variable_set(:@remote, true)
 
-      call_count = 0
-      allow(client).to receive(:repause) do
-        call_count += 1
-        call_count == 1 ? nil : ""
-      end
+      allow(client).to receive(:repause).and_return(nil)
+      allow(client).to receive(:check_paused).and_return("")
       allow(client).to receive(:sleep)
 
       result = client.auto_repause!
       expect(result).to be true
-      expect(client).to have_received(:repause).twice
+      expect(client).to have_received(:repause).once
+      expect(client).to have_received(:check_paused).once
       expect(client).to have_received(:sleep).with(0.3)
     ensure
       server.close rescue nil
@@ -692,34 +690,39 @@ RSpec.describe GirbMcp::DebugClient do
       client.instance_variable_set(:@pid, "99999")
 
       allow(client).to receive(:repause).and_return(nil)
+      allow(client).to receive(:check_paused).and_return(nil)
       allow(client).to receive(:sleep)
 
       expect { client.auto_repause! }.to raise_error(
         GirbMcp::SessionError, /could not be interrupted/
       )
-      # 3 attempts: initial(3s) + retry(5s) + final(8s)
-      expect(client).to have_received(:repause).exactly(3).times
+      # 1 repause (sends pause message) + 2 check_paused (wait only)
+      expect(client).to have_received(:repause).once
+      expect(client).to have_received(:check_paused).twice
     end
 
-    it "uses progressive sleep delays between remote repause retries" do
+    it "uses progressive sleep delays between remote check_paused retries" do
       client = GirbMcp::DebugClient.new
       client.instance_variable_set(:@connected, true)
       client.instance_variable_set(:@paused, false)
       client.instance_variable_set(:@remote, true)
       client.instance_variable_set(:@pid, "99999")
 
-      # First two fail, third succeeds
+      allow(client).to receive(:repause).and_return(nil)
+      # First check_paused fails, second succeeds
       call_count = 0
-      allow(client).to receive(:repause) do
+      allow(client).to receive(:check_paused) do
         call_count += 1
-        call_count == 3 ? "" : nil
+        call_count == 2 ? "" : nil
       end
-      allow(client).to receive(:sleep)
+      sleep_args = []
+      allow(client).to receive(:sleep) { |t| sleep_args << t }
 
       result = client.auto_repause!
       expect(result).to be true
-      expect(client).to have_received(:sleep).with(0.3).ordered
-      expect(client).to have_received(:sleep).with(0.5).ordered
+      expect(client).to have_received(:repause).once
+      expect(client).to have_received(:check_paused).twice
+      expect(sleep_args).to eq([0.3, 0.5])
     end
 
     it "falls back to SIGINT when repause fails" do
@@ -950,17 +953,18 @@ RSpec.describe GirbMcp::DebugClient do
   end
 
   describe "#auto_repause! (HTTP wake for remote)" do
-    it "tries HTTP wake when remote repause fails and listen_ports available" do
+    it "tries HTTP wake when remote check_paused fails and listen_ports available" do
       client, server = setup_client_with_socket
       client.instance_variable_set(:@paused, false)
       client.instance_variable_set(:@remote, true)
       client.listen_ports = [3000]
 
-      # First two repause calls fail, HTTP wake triggers, third succeeds
+      allow(client).to receive(:repause).and_return(nil)
+      # First check_paused fails (before HTTP wake), second succeeds (after HTTP wake)
       call_count = 0
-      allow(client).to receive(:repause) do
+      allow(client).to receive(:check_paused) do
         call_count += 1
-        call_count == 3 ? "" : nil
+        call_count == 2 ? "" : nil
       end
       allow(client).to receive(:sleep)
       wake_thread = instance_double(Thread)
@@ -969,6 +973,8 @@ RSpec.describe GirbMcp::DebugClient do
 
       result = client.auto_repause!
       expect(result).to be true
+      expect(client).to have_received(:repause).once
+      expect(client).to have_received(:check_paused).twice
       expect(client).to have_received(:wake_io_blocked_process).with(3000)
       expect(wake_thread).to have_received(:join).with(1)
     ensure

@@ -953,7 +953,7 @@ RSpec.describe GirbMcp::Tools::Connect do
         allow(client).to receive(:listen_ports).and_return([3000])
         allow(client).to receive(:auto_repause!).and_raise(GirbMcp::SessionError, "failed")
         allow(client).to receive(:wake_io_blocked_process).and_return(Thread.new {})
-        allow(client).to receive(:repause).and_return("")
+        allow(client).to receive(:check_paused).and_return("")
         allow(client).to receive(:send_command).and_return('=> :girb_health_check')
         allow(manager).to receive(:disconnect)
 

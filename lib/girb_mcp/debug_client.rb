@@ -381,24 +381,25 @@ module GirbMcp
       if result.nil?
         if @remote
           # Remote: interrupt_and_wait always returns nil (SIGINT can't reach the
-          # target process in a different PID namespace). Retry repause with
-          # progressive delays — the reader thread may need time to process
-          # the `pause` message, especially over TCP.
+          # target process in a different PID namespace). Wait for the single
+          # `pause` message (already sent by repause above) to take effect.
+          # Use check_paused (no new pause message) to avoid stale messages
+          # accumulating in the debug gem server's read buffer.
           sleep HTTP_WAKE_SETTLE_TIME
-          result = repause(timeout: 5)
-          # If repause still fails and we have listen ports, the process is likely
+          result = check_paused(timeout: 5)
+          # If still not paused and we have listen ports, the process is likely
           # blocked in IO.select (SA_RESTART prevents SIGURG from breaking through).
-          # Send an HTTP GET to wake it, then retry repause.
+          # Send an HTTP GET to wake it, then check again.
           if result.nil? && @listen_ports&.any?
             debug_log("auto_repause!: waking IO-blocked process via HTTP")
             wake_thread = wake_io_blocked_process(@listen_ports.first)
             sleep HTTP_WAKE_SETTLE_TIME
-            result = repause(timeout: 5)
+            result = check_paused(timeout: 5)
             wake_thread.join(1) rescue nil
           end
           if result.nil?
             sleep 0.5
-            result = repause(timeout: 8)
+            result = check_paused(timeout: 8)
           end
         else
           # Local: SIGINT can interrupt IO.select and similar C-level blocking calls.
@@ -511,6 +512,25 @@ module GirbMcp
     rescue Errno::ESRCH, Errno::EPERM
       # Process not found or no permission — can't repause
       nil
+    rescue Errno::EPIPE, Errno::ECONNRESET, IOError => e
+      @connected = false
+      @paused = false
+      raise ConnectionError, "Connection lost: #{e.message}"
+    end
+
+    # Check if the process has paused (drain buffer + wait) without sending a pause signal.
+    # Used by auto_repause! for retry attempts to avoid stale pause messages accumulating
+    # in the debug gem server's read buffer (which cause unexpected SIGURGs after disconnect).
+    def check_paused(timeout: 3)
+      return "" if @paused
+      return nil unless connected?
+
+      @mutex.synchronize do
+        return "" if @paused
+        drain_socket_buffer
+        return "" if @paused
+        wait_for_pause(timeout)
+      end
     rescue Errno::EPIPE, Errno::ECONNRESET, IOError => e
       @connected = false
       @paused = false

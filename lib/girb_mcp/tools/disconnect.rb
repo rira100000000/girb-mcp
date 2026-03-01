@@ -109,21 +109,22 @@ module GirbMcp
                 end
               end
 
-              # 3. For remote connections, try HTTP wake + repause
+              # 3. For remote connections, try HTTP wake + check_paused
+              #    (repause already sent the pause message at step 1 — avoid
+              #    sending more to prevent stale messages after disconnect)
               unless client.paused
                 if client.remote
-                  # Try HTTP wake to break IO.select, then repause
                   if client.listen_ports&.any?
                     begin
                       client.wake_io_blocked_process(client.listen_ports.first)
                       sleep DebugClient::HTTP_WAKE_SETTLE_TIME
-                      client.repause(timeout: 5)
+                      client.check_paused(timeout: 5)
                     rescue GirbMcp::Error
                       # Best-effort
                     end
                   else
                     begin
-                      client.repause(timeout: 5)
+                      client.check_paused(timeout: 5)
                     rescue GirbMcp::Error
                       # Best-effort
                     end

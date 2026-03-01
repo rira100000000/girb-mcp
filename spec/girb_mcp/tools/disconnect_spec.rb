@@ -201,36 +201,36 @@ RSpec.describe GirbMcp::Tools::Disconnect do
       end
     end
 
-    it "tries additional repause for remote client when initial repause and interrupt fail" do
+    it "tries check_paused for remote client when initial repause and interrupt fail" do
       allow(client).to receive(:remote).and_return(true)
       allow(client).to receive(:paused).and_return(false, false, false, true, false)
       allow(client).to receive(:listen_ports).and_return([])
       allow(client).to receive(:repause).with(timeout: 3).and_return(nil)
       allow(client).to receive(:interrupt_and_wait).with(timeout: 3).and_return(nil)
-      allow(client).to receive(:repause).with(timeout: 5).and_return("")
+      allow(client).to receive(:check_paused).with(timeout: 5).and_return("")
 
       response = described_class.call(server_context: server_context)
       text = response_text(response)
 
-      expect(client).to have_received(:repause).with(timeout: 5)
+      expect(client).to have_received(:check_paused).with(timeout: 5)
       expect(text).to include("Disconnected from session")
       expect(text).not_to include("WARNING")
     end
 
-    it "tries HTTP wake + repause for remote client with listen_ports" do
+    it "tries HTTP wake + check_paused for remote client with listen_ports" do
       allow(client).to receive(:remote).and_return(true)
       allow(client).to receive(:listen_ports).and_return([3000])
       allow(client).to receive(:paused).and_return(false, false, false, true, false)
       allow(client).to receive(:repause).with(timeout: 3).and_return(nil)
       allow(client).to receive(:interrupt_and_wait).with(timeout: 3).and_return(nil)
       allow(client).to receive(:wake_io_blocked_process).and_return(Thread.new {})
-      allow(client).to receive(:repause).with(timeout: 5).and_return("")
+      allow(client).to receive(:check_paused).with(timeout: 5).and_return("")
 
       response = described_class.call(server_context: server_context)
       text = response_text(response)
 
       expect(client).to have_received(:wake_io_blocked_process).with(3000)
-      expect(client).to have_received(:repause).with(timeout: 5)
+      expect(client).to have_received(:check_paused).with(timeout: 5)
       expect(text).to include("Disconnected from session")
       expect(text).not_to include("WARNING")
     end
