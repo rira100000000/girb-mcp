@@ -28,7 +28,7 @@ module GirbMcp
         },
       )
 
-      HTTP_JOIN_TIMEOUT = 5
+      HTTP_JOIN_TIMEOUT = 10
 
       class << self
         def call(session_id: nil, server_context:)
@@ -75,12 +75,18 @@ module GirbMcp
           MCP::Tool::Response.new([{ type: "text", text: text }])
         rescue GirbMcp::TimeoutError
           text = if has_breakpoints
-            "Execution continued but no breakpoint was hit within the timeout period.\n" \
-            "The process is still running — use 'set_breakpoint' then 'trigger_request' to hit a specific code path, " \
-            "or 'disconnect' to detach."
+            ">>> PROCESS STATE: RUNNING (not paused) <<<\n\n" \
+            "No breakpoint was hit within the timeout period.\n\n" \
+            "Next steps:\n" \
+            "1. set_breakpoint on a specific code path\n" \
+            "2. trigger_request to send an HTTP request (auto-resumes)\n" \
+            "3. disconnect to detach"
           else
-            "Process resumed successfully (running normally, no breakpoints set).\n" \
-            "Use 'set_breakpoint' to add breakpoints, then 'trigger_request' to hit a specific code path."
+            ">>> PROCESS STATE: RUNNING (not paused) <<<\n\n" \
+            "Process resumed successfully (no breakpoints set).\n\n" \
+            "Next steps:\n" \
+            "1. set_breakpoint to add breakpoints\n" \
+            "2. trigger_request to send an HTTP request and hit a breakpoint"
           end
           timeout_sec = server_context[:session_manager]&.timeout
           if timeout_sec
@@ -124,10 +130,21 @@ module GirbMcp
           elsif holder[:done]
             "#{text}\n\n--- HTTP Response ---\nHTTP #{method} #{url}\nUnexpected state: request completed without response."
           else
-            "#{text}\n\n--- HTTP Response ---\nHTTP #{method} #{url}\nRequest still in progress (timed out waiting)."
+            elapsed_note = format_http_elapsed(pending[:started_at])
+            thread_note = thread.alive? ? "still running" : "thread exited without response"
+            "#{text}\n\n--- HTTP Response ---\nHTTP #{method} #{url}\n" \
+              "Request still in progress (#{thread_note}#{elapsed_note})."
           end
         rescue StandardError
           text
+        end
+
+        # Format elapsed time since HTTP request started.
+        def format_http_elapsed(started_at)
+          return "" unless started_at
+
+          elapsed = (Time.now - started_at).to_i
+          ", started #{elapsed}s ago"
         end
 
         # Check if any breakpoints are currently set.

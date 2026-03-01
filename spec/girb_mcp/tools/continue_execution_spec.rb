@@ -70,33 +70,34 @@ RSpec.describe GirbMcp::Tools::ContinueExecution do
         )
       end
 
-      it "shows 'no breakpoint hit' when breakpoints exist" do
+      it "shows RUNNING state and 'no breakpoint hit' when breakpoints exist" do
         allow(client).to receive(:send_command)
           .with("info breakpoints")
           .and_return("#1  BP - Line  file.rb:10 (line)")
 
         response = described_class.call(server_context: server_context)
         text = response_text(response)
-        expect(text).to include("no breakpoint was hit")
-        expect(text).to include("still running")
+        expect(text).to include("PROCESS STATE: RUNNING")
+        expect(text).to include("not paused")
+        expect(text).to include("No breakpoint was hit")
         expect(text).to include("set_breakpoint")
         expect(text).to include("trigger_request")
         expect(text).to include("disconnect")
-        expect(text).not_to include("get_context")
       end
 
-      it "shows 'resumed successfully' when no breakpoints" do
+      it "shows RUNNING state and 'resumed successfully' when no breakpoints" do
         allow(client).to receive(:send_command)
           .with("info breakpoints")
           .and_return("No breakpoints")
 
         response = described_class.call(server_context: server_context)
         text = response_text(response)
+        expect(text).to include("PROCESS STATE: RUNNING")
+        expect(text).to include("not paused")
         expect(text).to include("resumed successfully")
         expect(text).to include("no breakpoints set")
         expect(text).to include("set_breakpoint")
         expect(text).to include("trigger_request")
-        expect(text).not_to include("get_context")
       end
 
       it "includes session lifetime note" do
@@ -252,6 +253,66 @@ RSpec.describe GirbMcp::Tools::ContinueExecution do
 
         described_class.call(server_context: server_context)
         expect(captured_block).to be_nil
+      end
+
+      it "shows elapsed time when HTTP request is still in progress" do
+        http_holder = { response: nil, error: nil, done: false }
+        http_thread = Thread.new { sleep 999 }
+
+        allow(client).to receive(:pending_http).and_return({
+          thread: http_thread, holder: http_holder, method: "GET", url: "http://localhost:3000/users",
+          started_at: Time.now - 15,
+        })
+
+        allow(client).to receive(:send_continue).and_return(
+          "Stop by #1  BP - Line  file.rb:20 (line)"
+        )
+
+        response = described_class.call(server_context: server_context)
+        text = response_text(response)
+        expect(text).to include("still running")
+        expect(text).to match(/started \d+s ago/)
+      ensure
+        http_thread.kill
+      end
+
+      it "shows dead thread state when thread exited without response" do
+        http_holder = { response: nil, error: nil, done: false }
+        http_thread = Thread.new {} # exits immediately
+        http_thread.join
+
+        allow(client).to receive(:pending_http).and_return({
+          thread: http_thread, holder: http_holder, method: "GET", url: "http://localhost:3000/users",
+          started_at: Time.now - 5,
+        })
+
+        allow(client).to receive(:send_continue).and_return(
+          "Stop by #1  BP - Line  file.rb:20 (line)"
+        )
+
+        response = described_class.call(server_context: server_context)
+        text = response_text(response)
+        expect(text).to include("thread exited without response")
+      end
+
+      it "omits elapsed time when started_at is not set" do
+        http_holder = { response: nil, error: nil, done: false }
+        http_thread = Thread.new { sleep 999 }
+
+        allow(client).to receive(:pending_http).and_return({
+          thread: http_thread, holder: http_holder, method: "GET", url: "http://localhost:3000/users",
+        })
+
+        allow(client).to receive(:send_continue).and_return(
+          "Stop by #1  BP - Line  file.rb:20 (line)"
+        )
+
+        response = described_class.call(server_context: server_context)
+        text = response_text(response)
+        expect(text).to include("still running")
+        expect(text).not_to include("started")
+      ensure
+        http_thread.kill
       end
     end
   end

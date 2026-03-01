@@ -14,7 +14,7 @@ RSpec.describe GirbMcp::Tools::EvaluateCode do
     it "evaluates code and returns result" do
       allow(client).to receive(:send_command).with(/\$__girb_err=nil; pp/).and_return("=> 42")
       allow(client).to receive(:send_command).with("p $__girb_err").and_return("=> nil")
-      allow(client).to receive(:send_command).with("$stdout = STDOUT; p $__girb_cap.string").and_return('=> ""')
+      allow(client).to receive(:send_command).with("$stdout = STDOUT; p $__girb_cap&.string").and_return('=> ""')
 
       response = described_class.call(code: "1 + 1", server_context: server_context)
       text = response_text(response)
@@ -26,7 +26,7 @@ RSpec.describe GirbMcp::Tools::EvaluateCode do
       allow(client).to receive(:send_command).with("p $__girb_err").and_return(
         '=> "NameError: undefined local variable \'x\'"'
       )
-      allow(client).to receive(:send_command).with("$stdout = STDOUT; p $__girb_cap.string").and_return('=> ""')
+      allow(client).to receive(:send_command).with("$stdout = STDOUT; p $__girb_cap&.string").and_return('=> ""')
 
       response = described_class.call(code: "x", server_context: server_context)
       text = response_text(response)
@@ -37,7 +37,7 @@ RSpec.describe GirbMcp::Tools::EvaluateCode do
     it "captures stdout output" do
       allow(client).to receive(:send_command).with(/\$__girb_err=nil; pp/).and_return("=> nil")
       allow(client).to receive(:send_command).with("p $__girb_err").and_return('=> nil')
-      allow(client).to receive(:send_command).with("$stdout = STDOUT; p $__girb_cap.string").and_return(
+      allow(client).to receive(:send_command).with("$stdout = STDOUT; p $__girb_cap&.string").and_return(
         '=> "hello world\n"'
       )
 
@@ -51,7 +51,7 @@ RSpec.describe GirbMcp::Tools::EvaluateCode do
       # pp(5) writes "5\n" to $stdout AND returns => 5 — same content, show only once
       allow(client).to receive(:send_command).with(/\$__girb_err=nil; pp/).and_return("=> 5")
       allow(client).to receive(:send_command).with("p $__girb_err").and_return('=> nil')
-      allow(client).to receive(:send_command).with("$stdout = STDOUT; p $__girb_cap.string").and_return(
+      allow(client).to receive(:send_command).with("$stdout = STDOUT; p $__girb_cap&.string").and_return(
         '=> "5\n"'
       )
 
@@ -66,7 +66,7 @@ RSpec.describe GirbMcp::Tools::EvaluateCode do
       # puts "debug info"; 42 → captured has "debug info\n42\n", return value is "=> 42"
       allow(client).to receive(:send_command).with(/\$__girb_err=nil; pp/).and_return("=> 42")
       allow(client).to receive(:send_command).with("p $__girb_err").and_return('=> nil')
-      allow(client).to receive(:send_command).with("$stdout = STDOUT; p $__girb_cap.string").and_return(
+      allow(client).to receive(:send_command).with("$stdout = STDOUT; p $__girb_cap&.string").and_return(
         '=> "debug info\n42\n"'
       )
 
@@ -116,7 +116,7 @@ RSpec.describe GirbMcp::Tools::EvaluateCode do
       allow(client).to receive(:send_command).with("catch NoMethodError").and_return("")
       allow(client).to receive(:send_command).with(/\$__girb_err=nil; pp/).and_return("=> 42")
       allow(client).to receive(:send_command).with("p $__girb_err").and_return('=> nil')
-      allow(client).to receive(:send_command).with("$stdout = STDOUT; p $__girb_cap.string").and_return('=> ""')
+      allow(client).to receive(:send_command).with("$stdout = STDOUT; p $__girb_cap&.string").and_return('=> ""')
 
       described_class.call(code: "1 + 1", server_context: server_context)
 
@@ -127,7 +127,7 @@ RSpec.describe GirbMcp::Tools::EvaluateCode do
     it "uses Base64 encoding for multi-line code" do
       allow(client).to receive(:send_command).with(/Base64/).and_return("=> 3")
       allow(client).to receive(:send_command).with("p $__girb_err").and_return('=> nil')
-      allow(client).to receive(:send_command).with("$stdout = STDOUT; p $__girb_cap.string").and_return('=> ""')
+      allow(client).to receive(:send_command).with("$stdout = STDOUT; p $__girb_cap&.string").and_return('=> ""')
 
       described_class.call(code: "a = 1\na + 2", server_context: server_context)
       expect(client).to have_received(:send_command).with(/Base64/)
@@ -136,40 +136,40 @@ RSpec.describe GirbMcp::Tools::EvaluateCode do
     it "uses Base64 encoding for non-ASCII code" do
       allow(client).to receive(:send_command).with(/Base64/).and_return('=> "hello"')
       allow(client).to receive(:send_command).with("p $__girb_err").and_return('=> nil')
-      allow(client).to receive(:send_command).with("$stdout = STDOUT; p $__girb_cap.string").and_return('=> ""')
+      allow(client).to receive(:send_command).with("$stdout = STDOUT; p $__girb_cap&.string").and_return('=> ""')
 
       described_class.call(code: 'puts "日本語"', server_context: server_context)
       expect(client).to have_received(:send_command).with(/Base64/)
     end
 
     context "trap context annotation" do
-      it "appends [trap context] when in trap context" do
+      it "appends trap context note with stdout capture hint" do
         client_in_trap = build_mock_client(trap_context: true)
         manager_in_trap = build_mock_manager(client: client_in_trap)
 
         allow(client_in_trap).to receive(:send_command).and_return("")
-        allow(client_in_trap).to receive(:send_command).with(/\$__girb_err=nil; pp/).and_return("=> 42")
+        allow(client_in_trap).to receive(:send_command).with(/\$__girb_err=nil; p\(begin/).and_return("=> 42")
         allow(client_in_trap).to receive(:send_command).with("p $__girb_err").and_return("=> nil")
-        allow(client_in_trap).to receive(:send_command).with("$stdout = STDOUT; p $__girb_cap.string").and_return('=> ""')
-        allow(client_in_trap).to receive(:send_command).with("frame", timeout: 3).and_return("#0 main at file.rb:1")
 
         response = described_class.call(
           code: "1 + 1",
           server_context: { session_manager: manager_in_trap },
         )
         text = response_text(response)
-        expect(text).to include("[trap context]")
+        expect(text).to include("[trap context")
+        expect(text).to include("stdout capture")
+        expect(text).to include("expression return values")
       end
 
-      it "does not append [trap context] when not in trap context" do
+      it "does not append trap context note when not in trap context" do
         allow(client).to receive(:send_command).with(/\$__girb_err=nil; pp/).and_return("=> 42")
         allow(client).to receive(:send_command).with("p $__girb_err").and_return("=> nil")
-        allow(client).to receive(:send_command).with("$stdout = STDOUT; p $__girb_cap.string").and_return('=> ""')
+        allow(client).to receive(:send_command).with("$stdout = STDOUT; p $__girb_cap&.string").and_return('=> ""')
         allow(client).to receive(:send_command).with("frame", timeout: 3).and_return("#0 main at file.rb:1")
 
         response = described_class.call(code: "1 + 1", server_context: server_context)
         text = response_text(response)
-        expect(text).not_to include("[trap context]")
+        expect(text).not_to include("trap context")
       end
     end
 
@@ -177,7 +177,7 @@ RSpec.describe GirbMcp::Tools::EvaluateCode do
       it "prepends frame info when not at frame 0" do
         allow(client).to receive(:send_command).with(/\$__girb_err=nil; pp/).and_return("=> 42")
         allow(client).to receive(:send_command).with("p $__girb_err").and_return("=> nil")
-        allow(client).to receive(:send_command).with("$stdout = STDOUT; p $__girb_cap.string").and_return('=> ""')
+        allow(client).to receive(:send_command).with("$stdout = STDOUT; p $__girb_cap&.string").and_return('=> ""')
         allow(client).to receive(:send_command).with("frame", timeout: 3).and_return(
           "#2  Object#method_a at /app/models/user.rb:25"
         )
@@ -191,7 +191,7 @@ RSpec.describe GirbMcp::Tools::EvaluateCode do
       it "does not prepend frame info at frame 0" do
         allow(client).to receive(:send_command).with(/\$__girb_err=nil; pp/).and_return("=> 42")
         allow(client).to receive(:send_command).with("p $__girb_err").and_return("=> nil")
-        allow(client).to receive(:send_command).with("$stdout = STDOUT; p $__girb_cap.string").and_return('=> ""')
+        allow(client).to receive(:send_command).with("$stdout = STDOUT; p $__girb_cap&.string").and_return('=> ""')
         allow(client).to receive(:send_command).with("frame", timeout: 3).and_return(
           "#0  UsersController#show at app/controllers/users_controller.rb:10"
         )
@@ -204,7 +204,7 @@ RSpec.describe GirbMcp::Tools::EvaluateCode do
       it "ignores frame errors gracefully" do
         allow(client).to receive(:send_command).with(/\$__girb_err=nil; pp/).and_return("=> 42")
         allow(client).to receive(:send_command).with("p $__girb_err").and_return("=> nil")
-        allow(client).to receive(:send_command).with("$stdout = STDOUT; p $__girb_cap.string").and_return('=> ""')
+        allow(client).to receive(:send_command).with("$stdout = STDOUT; p $__girb_cap&.string").and_return('=> ""')
         allow(client).to receive(:send_command).with("frame", timeout: 3).and_raise(
           GirbMcp::TimeoutError, "timeout"
         )
@@ -220,7 +220,7 @@ RSpec.describe GirbMcp::Tools::EvaluateCode do
       it "prepends warning for dangerous code" do
         allow(client).to receive(:send_command).with(/\$__girb_err=nil; pp/).and_return("=> :ok")
         allow(client).to receive(:send_command).with("p $__girb_err").and_return("=> nil")
-        allow(client).to receive(:send_command).with("$stdout = STDOUT; p $__girb_cap.string").and_return('=> ""')
+        allow(client).to receive(:send_command).with("$stdout = STDOUT; p $__girb_cap&.string").and_return('=> ""')
         allow(client).to receive(:send_command).with("frame", timeout: 3).and_return("#0 main at file.rb:1")
 
         response = described_class.call(code: 'File.write("/tmp/x", "data")', server_context: server_context)
@@ -235,7 +235,7 @@ RSpec.describe GirbMcp::Tools::EvaluateCode do
       it "does not prepend warning for safe code" do
         allow(client).to receive(:send_command).with(/\$__girb_err=nil; pp/).and_return("=> 42")
         allow(client).to receive(:send_command).with("p $__girb_err").and_return("=> nil")
-        allow(client).to receive(:send_command).with("$stdout = STDOUT; p $__girb_cap.string").and_return('=> ""')
+        allow(client).to receive(:send_command).with("$stdout = STDOUT; p $__girb_cap&.string").and_return('=> ""')
         allow(client).to receive(:send_command).with("frame", timeout: 3).and_return("#0 main at file.rb:1")
 
         response = described_class.call(code: "user.name", server_context: server_context)
@@ -250,7 +250,8 @@ RSpec.describe GirbMcp::Tools::EvaluateCode do
         manager_in_trap = build_mock_manager(client: client_in_trap)
 
         allow(client_in_trap).to receive(:send_command).and_return("")
-        allow(client_in_trap).to receive(:send_command).with(/p\(begin/).and_return('=> :ok')
+        allow(client_in_trap).to receive(:send_command).with(/\$__girb_err=nil; p\(begin/).and_return('=> :ok')
+        allow(client_in_trap).to receive(:send_command).with("p $__girb_err").and_return("=> nil")
 
         response = described_class.call(
           code: 'system("ls")',
@@ -260,13 +261,13 @@ RSpec.describe GirbMcp::Tools::EvaluateCode do
 
         expect(text).to include("WARNING:")
         expect(text).to include("System command execution:")
-        expect(text).to include("[trap context]")
+        expect(text).to include("[trap context")
       end
 
       it "includes execution result even when warning is present" do
         allow(client).to receive(:send_command).with(/\$__girb_err=nil; pp/).and_return("=> true")
         allow(client).to receive(:send_command).with("p $__girb_err").and_return("=> nil")
-        allow(client).to receive(:send_command).with("$stdout = STDOUT; p $__girb_cap.string").and_return('=> ""')
+        allow(client).to receive(:send_command).with("$stdout = STDOUT; p $__girb_cap&.string").and_return('=> ""')
         allow(client).to receive(:send_command).with("frame", timeout: 3).and_return("#0 main at file.rb:1")
 
         response = described_class.call(code: "User.destroy_all", server_context: server_context)
@@ -280,7 +281,7 @@ RSpec.describe GirbMcp::Tools::EvaluateCode do
       it "detects multiple dangerous categories" do
         allow(client).to receive(:send_command).with(/\$__girb_err=nil; pp/).and_return("=> nil")
         allow(client).to receive(:send_command).with("p $__girb_err").and_return("=> nil")
-        allow(client).to receive(:send_command).with("$stdout = STDOUT; p $__girb_cap.string").and_return('=> ""')
+        allow(client).to receive(:send_command).with("$stdout = STDOUT; p $__girb_cap&.string").and_return('=> ""')
         allow(client).to receive(:send_command).with("frame", timeout: 3).and_return("#0 main at file.rb:1")
 
         response = described_class.call(
@@ -298,7 +299,7 @@ RSpec.describe GirbMcp::Tools::EvaluateCode do
       before do
         allow(client).to receive(:send_command).with(/\$__girb_err=nil; pp/).and_return("=> true")
         allow(client).to receive(:send_command).with("p $__girb_err").and_return("=> nil")
-        allow(client).to receive(:send_command).with("$stdout = STDOUT; p $__girb_cap.string").and_return('=> ""')
+        allow(client).to receive(:send_command).with("$stdout = STDOUT; p $__girb_cap&.string").and_return('=> ""')
         allow(client).to receive(:send_command).with("frame", timeout: 3).and_return("#0 main at file.rb:1")
       end
 
@@ -345,7 +346,7 @@ RSpec.describe GirbMcp::Tools::EvaluateCode do
         allow(client).to receive(:send_command).with("p $__girb_err").and_return(
           '=> "ThreadError: can\'t be called from trap context"'
         )
-        allow(client).to receive(:send_command).with("$stdout = STDOUT; p $__girb_cap.string").and_return('=> ""')
+        allow(client).to receive(:send_command).with("$stdout = STDOUT; p $__girb_cap&.string").and_return('=> ""')
 
         response = described_class.call(code: "User.first", server_context: server_context)
         text = response_text(response)
@@ -361,13 +362,95 @@ RSpec.describe GirbMcp::Tools::EvaluateCode do
         allow(client).to receive(:send_command).with("p $__girb_err").and_return(
           '=> "NameError: undefined local variable \'x\'"'
         )
-        allow(client).to receive(:send_command).with("$stdout = STDOUT; p $__girb_cap.string").and_return('=> ""')
+        allow(client).to receive(:send_command).with("$stdout = STDOUT; p $__girb_cap&.string").and_return('=> ""')
 
         response = described_class.call(code: "x", server_context: server_context)
         text = response_text(response)
 
         expect(text).to include("NameError")
         expect(text).not_to include("trap context")
+      end
+    end
+
+    context "trap context error detection" do
+      let(:client_in_trap) { build_mock_client(trap_context: true) }
+      let(:manager_in_trap) { build_mock_manager(client: client_in_trap) }
+
+      before do
+        allow(client_in_trap).to receive(:send_command).and_return("")
+      end
+
+      it "detects error via $__girb_err in trap context" do
+        allow(client_in_trap).to receive(:send_command).with(/\$__girb_err=nil; p\(begin/).and_return("=> nil")
+        allow(client_in_trap).to receive(:send_command).with("p $__girb_err").and_return(
+          '=> "NameError: undefined local variable \'x\'"'
+        )
+
+        response = described_class.call(
+          code: "x",
+          server_context: { session_manager: manager_in_trap },
+        )
+        text = response_text(response)
+        expect(text).to include("Error:")
+        expect(text).to include("NameError")
+      end
+
+      it "returns normal value when no error in trap context" do
+        allow(client_in_trap).to receive(:send_command).with(/\$__girb_err=nil; p\(begin/).and_return("=> 42")
+        allow(client_in_trap).to receive(:send_command).with("p $__girb_err").and_return("=> nil")
+
+        response = described_class.call(
+          code: "1 + 1",
+          server_context: { session_manager: manager_in_trap },
+        )
+        text = response_text(response)
+        expect(text).to include("42")
+        expect(text).not_to include("Error:")
+      end
+
+      it "shows ThreadError guidance in trap context" do
+        allow(client_in_trap).to receive(:send_command).with(/\$__girb_err=nil; p\(begin/).and_return("=> nil")
+        allow(client_in_trap).to receive(:send_command).with("p $__girb_err").and_return(
+          '=> "ThreadError: can\'t be called from trap context"'
+        )
+
+        response = described_class.call(
+          code: "User.first",
+          server_context: { session_manager: manager_in_trap },
+        )
+        text = response_text(response)
+        expect(text).to include("ThreadError")
+        expect(text).to include("signal trap context")
+        expect(text).to include("set_breakpoint")
+        expect(text).to include("trigger_request")
+      end
+
+      it "handles multi-line code in trap context with error detection" do
+        allow(client_in_trap).to receive(:send_command).with(/\$__girb_err=nil; p\(begin; eval/).and_return("=> 3")
+        allow(client_in_trap).to receive(:send_command).with("p $__girb_err").and_return("=> nil")
+
+        response = described_class.call(
+          code: "a = 1\na + 2",
+          server_context: { session_manager: manager_in_trap },
+        )
+        text = response_text(response)
+        expect(text).to include("3")
+        expect(text).not_to include("Error:")
+      end
+    end
+
+    context "$__girb_cap nil safety" do
+      it "handles nil $__girb_cap gracefully" do
+        allow(client).to receive(:send_command).with(/\$__girb_err=nil; pp/).and_return("=> 42")
+        allow(client).to receive(:send_command).with("p $__girb_err").and_return("=> nil")
+        allow(client).to receive(:send_command).with("$stdout = STDOUT; p $__girb_cap&.string").and_return("=> nil")
+        allow(client).to receive(:send_command).with("frame", timeout: 3).and_return("#0 main at file.rb:1")
+
+        response = described_class.call(code: "1 + 1", server_context: server_context)
+        text = response_text(response)
+        expect(text).to include("42")
+        expect(text).not_to include("IO")
+        expect(text).not_to include("STDOUT")
       end
     end
 
@@ -392,6 +475,8 @@ RSpec.describe GirbMcp::Tools::EvaluateCode do
 
       it "appends note in trap context path" do
         allow(client).to receive(:trap_context).and_return(true)
+        allow(client).to receive(:send_command).with(/\$__girb_err=nil; p\(begin/).and_return('=> 2')
+        allow(client).to receive(:send_command).with("p $__girb_err").and_return("=> nil")
         holder = { response: { status: "200 OK" }, error: nil, done: true }
         allow(client).to receive(:pending_http).and_return(
           { holder: holder, method: "POST", url: "http://localhost:3000/users" },

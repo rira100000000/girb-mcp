@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "mcp"
+require_relative "../rails_helper"
 
 module GirbMcp
   module Tools
@@ -77,8 +78,8 @@ module GirbMcp
           file = file_output.delete('"')
           line = line_output.to_i
 
-          # Read source directly from filesystem (MCP server runs on same machine)
-          source = read_method_source(file, line)
+          # Read source directly from filesystem, or via remote if Docker/remote connection
+          source = read_method_source(client, file, line)
 
           parts = [target]
           parts << "  File: #{file}:#{line}"
@@ -109,9 +110,17 @@ module GirbMcp
           MCP::Tool::Response.new([{ type: "text", text: parts.join("\n") }])
         end
 
-        def read_method_source(file, start_line)
-          return nil unless File.exist?(file)
+        def read_method_source(client, file, start_line)
+          if File.exist?(file)
+            read_method_source_local(file, start_line)
+          elsif client.remote
+            read_method_source_remote(client, file, start_line)
+          end
+        rescue StandardError
+          nil
+        end
 
+        def read_method_source_local(file, start_line)
           lines = File.readlines(file)
           return nil if start_line < 1 || start_line > lines.length
 
@@ -119,8 +128,44 @@ module GirbMcp
           selected = lines[(start_line - 1)..end_line]
 
           selected.map.with_index(start_line) { |line, num| "  #{num.to_s.rjust(4)}| #{line}" }.join
-        rescue StandardError
-          nil
+        end
+
+        # Max lines to fetch per chunk via debug session
+        REMOTE_CHUNK_SIZE = 50
+
+        def read_method_source_remote(client, file, start_line)
+          return nil if start_line < 1
+
+          # Get total line count from remote
+          count_str = RailsHelper.eval_expr(client, "File.readlines(#{file.inspect}).size")
+          return nil unless count_str
+
+          total_lines = count_str.to_i
+          return nil if start_line > total_lines
+
+          # Fetch enough lines to find method end (start_line through start_line + MAX_SOURCE_LINES)
+          fetch_start = start_line - 1
+          fetch_end = [fetch_start + MAX_SOURCE_LINES, total_lines - 1].min
+
+          all_lines = []
+          pos = fetch_start
+          while pos <= fetch_end
+            chunk_end = [pos + REMOTE_CHUNK_SIZE - 1, fetch_end].min
+            chunk = RailsHelper.eval_expr(client,
+              "File.readlines(#{file.inspect})[#{pos}..#{chunk_end}].join")
+            break unless chunk
+
+            all_lines << chunk
+            pos = chunk_end + 1
+          end
+
+          return nil if all_lines.empty?
+
+          lines = all_lines.join.lines
+          end_index = find_method_end(lines, 0)
+          selected = lines[0..end_index]
+
+          selected.map.with_index(start_line) { |line, num| "  #{num.to_s.rjust(4)}| #{line}" }.join
         end
 
         # girb本家のロジックを流用: インデント解析でメソッド終端を探す

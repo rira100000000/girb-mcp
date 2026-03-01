@@ -111,6 +111,57 @@ RSpec.describe GirbMcp::Tools::TriggerRequest do
         expect(text).to include("200")
       end
 
+      it "shows re-paused hint when auto_repause succeeds after no breakpoint hit" do
+        stub_http_response
+
+        not_paused_client = build_mock_client(paused: false)
+        allow(manager).to receive(:client).and_return(not_paused_client)
+        allow(not_paused_client).to receive(:ensure_paused).and_return("")
+        allow(not_paused_client).to receive(:continue_and_wait).and_return({
+          type: :interrupted,
+          output: "",
+        })
+        allow(not_paused_client).to receive(:auto_repause!).and_return(true)
+
+        response = described_class.call(
+          method: "GET",
+          url: "http://localhost:3000/users",
+          server_context: server_context,
+        )
+        text = response_text(response)
+
+        expect(text).to include("No breakpoint hit")
+        expect(text).to include("re-paused")
+        expect(text).to include("evaluate code")
+        expect(text).to include("200")
+      end
+
+      it "shows running hint when auto_repause fails after no breakpoint hit" do
+        stub_http_response
+
+        not_paused_client = build_mock_client(paused: false)
+        allow(manager).to receive(:client).and_return(not_paused_client)
+        allow(not_paused_client).to receive(:ensure_paused).and_return("")
+        allow(not_paused_client).to receive(:continue_and_wait).and_return({
+          type: :interrupted,
+          output: "",
+        })
+        allow(not_paused_client).to receive(:auto_repause!).and_raise(
+          GirbMcp::SessionError, "could not be interrupted"
+        )
+
+        response = described_class.call(
+          method: "GET",
+          url: "http://localhost:3000/users",
+          server_context: server_context,
+        )
+        text = response_text(response)
+
+        expect(text).to include("No breakpoint hit")
+        expect(text).to include("process is now running")
+        expect(text).to include("200")
+      end
+
       it "returns HTTP response when continue times out" do
         stub_http_response
 
@@ -216,6 +267,96 @@ RSpec.describe GirbMcp::Tools::TriggerRequest do
         expect(text).to include("trigger_request")
         expect(text).to include("disconnect")
         expect(text).not_to include("get_context")
+      end
+
+      it "attempts auto_repause! recovery on double timeout" do
+        stub_const("GirbMcp::Tools::TriggerRequest::HTTP_JOIN_TIMEOUT", 0.1)
+
+        request_barrier = Queue.new
+        stub_http_response
+        allow(mock_http).to receive(:request) { request_barrier.pop }
+
+        not_paused_client = build_mock_client(paused: false)
+        allow(manager).to receive(:client).and_return(not_paused_client)
+        allow(not_paused_client).to receive(:wait_for_breakpoint).and_return({
+          type: :timeout,
+          output: "",
+        })
+        allow(not_paused_client).to receive(:auto_repause!).and_return(true)
+
+        response = described_class.call(
+          method: "GET",
+          url: "http://localhost:3000/users",
+          server_context: server_context,
+        )
+
+        request_barrier << nil
+
+        text = response_text(response)
+
+        expect(not_paused_client).to have_received(:auto_repause!).at_least(:once)
+        expect(text).to include("Recovery: Successfully re-paused")
+      end
+
+      it "shows normal diagnostics when auto_repause! recovery fails" do
+        stub_const("GirbMcp::Tools::TriggerRequest::HTTP_JOIN_TIMEOUT", 0.1)
+
+        request_barrier = Queue.new
+        stub_http_response
+        allow(mock_http).to receive(:request) { request_barrier.pop }
+
+        not_paused_client = build_mock_client(paused: false)
+        allow(manager).to receive(:client).and_return(not_paused_client)
+        allow(not_paused_client).to receive(:wait_for_breakpoint).and_return({
+          type: :timeout,
+          output: "",
+        })
+        allow(not_paused_client).to receive(:auto_repause!).and_raise(
+          GirbMcp::SessionError, "could not be interrupted"
+        )
+
+        response = described_class.call(
+          method: "GET",
+          url: "http://localhost:3000/users",
+          server_context: server_context,
+        )
+
+        request_barrier << nil
+
+        text = response_text(response)
+
+        expect(text).not_to include("Recovery:")
+        expect(text).to include("No breakpoint was hit")
+      end
+
+      it "skips recovery when process is already paused on timeout" do
+        stub_const("GirbMcp::Tools::TriggerRequest::HTTP_JOIN_TIMEOUT", 0.1)
+
+        request_barrier = Queue.new
+        stub_http_response
+        allow(mock_http).to receive(:request) { request_barrier.pop }
+
+        allow(client).to receive(:ensure_paused).and_return("")
+        allow(client).to receive(:continue_and_wait).and_return({
+          type: :timeout,
+          output: "",
+        })
+        allow(client).to receive(:send_command)
+          .with("info breakpoints")
+          .and_return("No breakpoints")
+
+        response = described_class.call(
+          method: "GET",
+          url: "http://localhost:3000/users",
+          server_context: server_context,
+        )
+
+        request_barrier << nil
+
+        text = response_text(response)
+
+        # auto_repause! should not be called again in recovery (only initial call)
+        expect(text).not_to include("Recovery:")
       end
 
       it "shows no-breakpoints hint on timeout when none set" do

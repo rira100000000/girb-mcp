@@ -198,20 +198,25 @@ module GirbMcp
           when :interrupted
             # HTTP response triggered the interrupt — wait for thread to finish
             http_thread.join(HTTP_JOIN_TIMEOUT)
-            build_http_done_response(method, url, http_holder)
+            repaused = attempt_repause_after_no_hit(client)
+            build_http_done_response(method, url, http_holder, repaused: repaused)
 
           when :timeout, :timeout_with_output
             # Neither breakpoint nor HTTP response in time
             http_thread.join(HTTP_JOIN_TIMEOUT) # Give HTTP a bit more time
             if http_holder[:done]
-              build_http_done_response(method, url, http_holder)
+              repaused = attempt_repause_after_no_hit(client)
+              build_http_done_response(method, url, http_holder, repaused: repaused)
             else
+              recovery_note = attempt_timeout_recovery(client)
               text = "HTTP #{method} #{url}\n\n" \
                      "No breakpoint was hit and the request has not completed after #{timeout}s.\n" \
                      "Possible causes:\n" \
                      "  - No breakpoints are set on the code path for this request\n" \
                      "  - The URL may be incorrect (check the path and port)\n" \
-                     "  - The server may be processing a long-running operation\n\n"
+                     "  - The server may be processing a long-running operation\n" \
+                     "  - The 'c' command may not have been processed by the debug gem\n\n"
+              text += recovery_note unless recovery_note.empty?
               text += breakpoint_diagnostics(client)
               MCP::Tool::Response.new([{ type: "text", text: text }])
             end
@@ -227,7 +232,7 @@ module GirbMcp
           # Save pending HTTP info so continue_execution can retrieve the response
           if http_thread && http_holder
             client.pending_http = { thread: http_thread, holder: http_holder,
-                                    method: method, url: url }
+                                    method: method, url: url, started_at: Time.now }
           end
 
           text = "HTTP #{method} #{url} — request sent.\n\n" \
@@ -242,17 +247,21 @@ module GirbMcp
                        "set breakpoints and use 'trigger_request' again, " \
                        "or use 'connect' to reconnect (current session will be replaced)."
 
+        REPAUSED_HINT = "The process has been re-paused. " \
+                        "You can set breakpoints, evaluate code, or use 'trigger_request' again."
+
         RUNNING_DIAGNOSTICS_HINT = "The process is running and cannot be inspected directly.\n" \
                                    "To retry: verify breakpoint paths with 'set_breakpoint', then call 'trigger_request' again.\n" \
                                    "If the process seems stuck, use 'disconnect' to detach and 'connect' to re-attach.\n"
 
-        def build_http_done_response(method, url, http_holder, client: nil)
+        def build_http_done_response(method, url, http_holder, repaused: false)
+          hint = repaused ? REPAUSED_HINT : RUNNING_HINT
           if http_holder[:error]
-            text = "HTTP #{method} #{url}\n\nRequest error: #{http_holder[:error].message}\n\n#{RUNNING_HINT}"
+            text = "HTTP #{method} #{url}\n\nRequest error: #{http_holder[:error].message}\n\n#{hint}"
           elsif http_holder[:response]
-            text = "HTTP #{method} #{url}\n\nNo breakpoint hit. #{RUNNING_HINT}\n\n#{format_response(http_holder[:response])}"
+            text = "HTTP #{method} #{url}\n\nNo breakpoint hit. #{hint}\n\n#{format_response(http_holder[:response])}"
           else
-            text = "HTTP #{method} #{url}\n\nUnexpected state: request completed without response.\n\n#{RUNNING_HINT}"
+            text = "HTTP #{method} #{url}\n\nUnexpected state: request completed without response.\n\n#{hint}"
           end
           MCP::Tool::Response.new([{ type: "text", text: text }])
         end
@@ -365,6 +374,33 @@ module GirbMcp
           end
 
           parts.join("\n")
+        end
+
+        # Attempt to re-pause the process after HTTP completed with no breakpoint hit.
+        # Returns true if the process was successfully re-paused, false otherwise.
+        def attempt_repause_after_no_hit(client)
+          return false unless client&.connected?
+          return true if client.paused # Already paused
+
+          client.auto_repause!
+          true
+        rescue GirbMcp::Error
+          false
+        end
+
+        # Attempt to recover the session after a double timeout
+        # (both breakpoint wait and HTTP request timed out).
+        # Tries auto_repause! to re-establish control of the process.
+        # Returns a recovery note string (may be empty).
+        def attempt_timeout_recovery(client)
+          return "" unless client&.connected?
+          return "" if client.paused # Already paused, no recovery needed
+
+          client.auto_repause!
+          "Recovery: Successfully re-paused the process. " \
+          "You can set breakpoints and retry, or use 'disconnect' to detach.\n\n"
+        rescue GirbMcp::Error
+          ""
         end
 
         # Build diagnostic info about current breakpoints for timeout/no-hit messages.

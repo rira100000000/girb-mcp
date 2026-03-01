@@ -73,7 +73,7 @@ module GirbMcp
             # Proactive recovery: if a previous timeout left $stdout redirected
             # to StringIO, restore it to the original STDOUT constant (immutable).
             begin
-              client.send_command('$stdout = STDOUT if $stdout != STDOUT')
+              client.send_command('$stdout = STDOUT if $stdout != STDOUT; nil')
             rescue GirbMcp::Error
               # Best-effort
             end
@@ -173,20 +173,38 @@ module GirbMcp
         # Only uses simple expressions that are safe in restricted context.
         def call_in_trap_context(client, code, warning_text: nil)
           # Use `p` instead of `pp` (pp may trigger autoload in some cases)
+          # Use $__girb_err pattern (same as normal path) for structured error detection.
           # Single-line code only; multi-line code with newlines can't use Base64 (require hangs)
           if code.include?("\n")
             output = client.send_command(
-              "p(begin; eval(#{code.gsub("\n", ";").inspect}); " \
-              'rescue => __e; "#{__e.class}: #{__e.message}"; end)',
+              "$__girb_err=nil; p(begin; eval(#{code.gsub("\n", ";").inspect}); " \
+              'rescue => __e; $__girb_err="#{__e.class}: #{__e.message}"; nil; end)',
             )
           else
             output = client.send_command(
-              "p(begin; (#{code}); " \
-              'rescue => __e; "#{__e.class}: #{__e.message}"; end)',
+              "$__girb_err=nil; p(begin; (#{code}); " \
+              'rescue => __e; $__girb_err="#{__e.class}: #{__e.message}"; nil; end)',
             )
           end
 
-          text = output
+          # Check for captured error (one additional round-trip, but safe in trap context)
+          err_info = read_eval_error(client)
+
+          if err_info
+            text = "Error: #{err_info}"
+            text += "\n\nDebugger output:\n#{output}" if output && !output.strip.empty? && output.strip != "nil"
+            if err_info.include?("ThreadError")
+              text += "\n\nThis error occurs in signal trap context (common when connecting to Puma/Rails via SIGURG).\n" \
+                      "Thread operations (Mutex, DB queries, model autoloading) are not available here.\n\n" \
+                      "To escape trap context:\n" \
+                      "  1. set_breakpoint on a line in your controller/action\n" \
+                      "  2. trigger_request to send an HTTP request (this auto-resumes the process)\n" \
+                      "  3. Once stopped at the breakpoint, all operations work normally"
+            end
+          else
+            text = output
+          end
+
           text = append_trap_context_note(client, text)
           text = append_pending_http_note(client, text)
           text = prepend_warning(text, warning_text)
@@ -237,7 +255,7 @@ module GirbMcp
         # Restore $stdout and read captured output in a single command.
         # Combines two round-trips into one.
         def restore_and_read_stdout(client)
-          result = client.send_command("$stdout = STDOUT; p $__girb_cap.string")
+          result = client.send_command("$stdout = STDOUT; p $__girb_cap&.string")
           parse_captured_stdout(result)
         rescue GirbMcp::Error
           nil
@@ -290,7 +308,7 @@ module GirbMcp
 
         def append_trap_context_note(client, text)
           return text unless client.respond_to?(:trap_context) && client.trap_context
-          "#{text}\n\n[trap context]"
+          "#{text}\n\n[trap context — stdout capture (puts/print) is not available; use expression return values instead]"
         end
 
         def append_pending_http_note(client, text)
