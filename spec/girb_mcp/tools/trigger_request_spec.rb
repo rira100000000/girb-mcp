@@ -121,7 +121,10 @@ RSpec.describe GirbMcp::Tools::TriggerRequest do
           type: :interrupted,
           output: "",
         })
-        allow(not_paused_client).to receive(:auto_repause!).and_return(true)
+        allow(not_paused_client).to receive(:auto_repause!) do
+          allow(not_paused_client).to receive(:paused).and_return(true)
+          true
+        end
 
         response = described_class.call(
           method: "GET",

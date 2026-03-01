@@ -383,7 +383,7 @@ module GirbMcp
           return true if client.paused # Already paused
 
           client.auto_repause!
-          true
+          client.paused
         rescue GirbMcp::Error
           false
         end

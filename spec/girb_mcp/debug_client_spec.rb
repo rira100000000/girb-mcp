@@ -826,7 +826,7 @@ RSpec.describe GirbMcp::DebugClient do
       server.close rescue nil
     end
 
-    it "stays in trap context when escape times out" do
+    it "stays in trap context when escape times out but re-pauses" do
       client, server = setup_client_with_socket
       client.instance_variable_set(:@paused, false)
       client.listen_ports = [3000]
@@ -850,8 +850,16 @@ RSpec.describe GirbMcp::DebugClient do
         server.write("input 12345\n")
 
         server.gets # "command ... c\n"
-        # Don't respond — escape fails, ensure_paused times out,
-        # send_command("delete ...") raises SessionError (not paused) → caught
+        # Don't respond to continue — escape fails (continue_and_wait times out)
+        # attempt_trap_escape! calls repause(timeout: 3) which sends SIGURG
+        # auto_repause! also calls repause(timeout: 3) as recovery
+        # Respond to the recovery repause with input prompt
+        sleep 0.3 # Wait for recovery repause SIGURG
+        server.write("input 12345\n")
+
+        server.gets # "command ... p nil\n" (protocol sync)
+        server.write("out nil\n")
+        server.write("input 12345\n")
       rescue IOError
         # Server socket may be closed by ensure block
       end
@@ -860,6 +868,46 @@ RSpec.describe GirbMcp::DebugClient do
       result = client.auto_repause!
       expect(result).to be true
       expect(client.trap_context).to be true
+      expect(client.paused).to be true
+    ensure
+      server.close rescue nil
+      server_thread&.join(2)
+    end
+
+    it "raises SessionError when recovery repause also fails after trap escape" do
+      client, server = setup_client_with_socket
+      client.instance_variable_set(:@paused, false)
+      client.listen_ports = [3000]
+      client.escape_target = { file: "/gems/metal.rb", line: 211, path: "/" }
+
+      http_double = instance_double(Net::HTTP)
+      allow(Net::HTTP).to receive(:new).and_return(http_double)
+      allow(http_double).to receive(:open_timeout=)
+      allow(http_double).to receive(:read_timeout=)
+      allow(http_double).to receive(:get).and_return(Net::HTTPResponse)
+      allow(http_double).to receive(:finish)
+
+      server_thread = Thread.new do
+        Thread.current.report_on_exception = false
+        sleep 0.05
+        server.write("input 12345\n")
+
+        server.gets # "command ... break ..."
+        server.write("out #1  BP - Line  /gems/metal.rb:211\n")
+        server.write("input 12345\n")
+
+        server.gets # "command ... c\n"
+        # Don't respond to continue — escape fails
+        # Don't respond to recovery repause either — total failure
+      rescue IOError
+        # Server socket may be closed by ensure block
+      end
+      allow(Process).to receive(:kill).with("URG", 12345)
+
+      expect { client.auto_repause! }.to raise_error(
+        GirbMcp::SessionError,
+        /Process could not be re-paused after failed trap escape/
+      )
     ensure
       server.close rescue nil
       server_thread&.join(2)

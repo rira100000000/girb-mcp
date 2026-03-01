@@ -421,6 +421,18 @@ module GirbMcp
         attempt_trap_escape!
         debug_log("auto_repause!: after trap escape (trap=#{@trap_context})")
 
+        # If trap escape left the process running (e.g., HTTP completed before
+        # breakpoint was hit), re-pause without attempting escape again.
+        unless @paused
+          debug_log("auto_repause!: trap escape left process unpaused, re-pausing")
+          re_result = repause(timeout: 3)
+          if re_result.nil?
+            raise SessionError, "Process could not be re-paused after failed trap escape. " \
+                                "Use 'disconnect' and 'connect' to re-attach."
+          end
+          # Stay in trap context — escape failed but process is at least paused
+        end
+
         # Protocol sync: after attempt_trap_escape!, TCP in-flight data from
         # the escape sequence (break, continue, delete commands) may still be
         # arriving. Send a no-op command to perform a full round-trip and
@@ -677,15 +689,17 @@ module GirbMcp
       if result[:type] == :breakpoint
         @trap_context = false
       else
-        # Escape failed — try to re-pause so subsequent commands work
-        ensure_paused(timeout: 3)
+        # Escape failed — actively re-pause (SIGURG) instead of passive wait
+        repause(timeout: 3) unless @paused
       end
 
-      # Clean up the temporary breakpoint (best-effort)
-      begin
-        send_command("delete #{bp_number}")
-      rescue GirbMcp::Error
-        # Best-effort cleanup
+      # Clean up the temporary breakpoint (best-effort, only if paused)
+      if @paused
+        begin
+          send_command("delete #{bp_number}")
+        rescue GirbMcp::Error
+          # Best-effort cleanup
+        end
       end
     rescue GirbMcp::Error
       # Failed to escape — stay in trap context (same behavior as before)
