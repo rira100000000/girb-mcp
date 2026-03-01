@@ -5,6 +5,6 @@ set -e
 rm -f tmp/pids/server.pid
 
 # DB setup: create, migrate, seed (idempotent)
-bin/rails db:prepare
+env -u RUBY_DEBUG_OPEN -u RUBY_DEBUG_PORT -u RUBY_DEBUG_HOST bin/rails db:prepare
 
 exec "$@"
