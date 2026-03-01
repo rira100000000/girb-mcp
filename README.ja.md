@@ -2,21 +2,21 @@
 
 LLMエージェントが実行中のRubyプロセスの実行時コンテキストにアクセスするためのMCP (Model Context Protocol) サーバーです。
 
-Claude CodeなどのLLMエージェントが、停止中のRubyプロセスに接続し、変数の調査・コード評価・ブレークポイント設定・実行制御をMCPツール呼び出しだけで完結できます。
+LLMエージェントが、停止中のRubyプロセスに接続し、変数の調査・コード評価・ブレークポイント設定・実行制御をMCPツール呼び出しだけで完結できます。MCP対応クライアントであれば何でも利用可能です。
 
 ## できること
 
 既存のRuby/Rails向けMCPサーバーは静的解析やアプリケーションレベルのAPIにとどまっています。girb-mcpはdebug gem経由で**実行中のRubyプロセス**に接続し、その実行時状態をLLMエージェントに公開します。
 
 ```
-Claude Code → connect(host: "localhost", port: 12345)
-Claude Code → get_context()
+Agent → connect(host: "localhost", port: 12345)
+Agent → get_context()
   → ローカル変数、インスタンス変数、コールスタック
-Claude Code → evaluate_code(code: "user.valid?")
+Agent → evaluate_code(code: "user.valid?")
   → false
-Claude Code → evaluate_code(code: "user.errors.full_messages")
+Agent → evaluate_code(code: "user.errors.full_messages")
   → ["Email can't be blank"]
-Claude Code → continue_execution()
+Agent → continue_execution()
 ```
 
 ## インストール
@@ -48,7 +48,11 @@ RUBY_DEBUG_OPEN=true RUBY_DEBUG_PORT=12345 ruby my_script.rb
 rdbg --open my_script.rb
 ```
 
-### 2. Claude Codeの設定
+### 2. MCPクライアントの設定
+
+girb-mcpはMCP対応クライアントであれば何でも動作します。お使いのクライアントのMCPサーバー設定に追加してください：
+
+#### Claude Code
 
 `~/.claude/settings.json`（またはプロジェクトの`.claude/settings.json`）に追加：
 
@@ -76,9 +80,37 @@ Bundler経由の場合：
 }
 ```
 
-### 3. Claude Codeでデバッグ
+#### Gemini CLI
 
-Claude Codeに接続とデバッグを依頼：
+`~/.gemini/settings.json` に追加：
+
+```json
+{
+  "mcpServers": {
+    "girb-mcp": {
+      "command": "girb-mcp",
+      "args": []
+    }
+  }
+}
+```
+
+Bundler経由の場合：
+
+```json
+{
+  "mcpServers": {
+    "girb-mcp": {
+      "command": "bundle",
+      "args": ["exec", "girb-mcp"]
+    }
+  }
+}
+```
+
+### 3. デバッグ開始
+
+エージェントに接続とデバッグを依頼：
 
 > 「ポート12345のデバッグセッションに接続して現在の状態を見せて」
 
@@ -98,7 +130,7 @@ Usage: girb-mcp [options]
 
 ### STDIOトランスポート（デフォルト）
 
-Claude Codeなどの標準的なMCPクライアント向け。追加設定は不要です。
+標準的なMCPクライアント向け。追加設定は不要です。
 
 ```bash
 girb-mcp
@@ -307,10 +339,10 @@ Agent: get_context()
 ## 仕組み
 
 ```
-┌─────────────┐ STDIO or Streamable HTTP ┌───────────┐    TCP/Unixソケット   ┌──────────────┐
-│ Claude Code  │ ◄──────────────────────► │ girb-mcp  │ ◄──────────────────► │ Rubyプロセス  │
-│ (MCPクライアント)│       (JSON-RPC)         │(MCPサーバー) │  debug gemプロトコル  │  (rdbg)      │
-└─────────────┘                           └───────────┘                      └──────────────┘
+┌──────────────┐ STDIO or Streamable HTTP ┌───────────┐    TCP/Unixソケット   ┌──────────────┐
+│ MCPクライアント │ ◄──────────────────────► │ girb-mcp  │ ◄──────────────────► │ Rubyプロセス  │
+│              │       (JSON-RPC)         │(MCPサーバー) │  debug gemプロトコル  │  (rdbg)      │
+└──────────────┘                           └───────────┘                      └──────────────┘
 ```
 
 1. girb-mcpはSTDIO（デフォルト）またはStreamable HTTPで通信するMCPサーバーとして動作

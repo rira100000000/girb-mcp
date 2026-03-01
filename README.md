@@ -4,21 +4,21 @@
 
 MCP (Model Context Protocol) server that gives LLM agents access to the runtime context of executing Ruby processes.
 
-LLM agents like Claude Code can connect to a paused Ruby process, inspect variables, evaluate code, set breakpoints, and control execution — all through MCP tool calls.
+LLM agents can connect to a paused Ruby process, inspect variables, evaluate code, set breakpoints, and control execution — all through MCP tool calls.
 
 ## What it does
 
 Existing Ruby/Rails MCP servers only provide static analysis or application-level APIs. girb-mcp goes further: it connects to **running Ruby processes** via the debug gem and exposes their runtime state to LLM agents.
 
 ```
-Claude Code → connect(host: "localhost", port: 12345)
-Claude Code → get_context()
+Agent → connect(host: "localhost", port: 12345)
+Agent → get_context()
   → local variables, instance variables, call stack
-Claude Code → evaluate_code(code: "user.valid?")
+Agent → evaluate_code(code: "user.valid?")
   → false
-Claude Code → evaluate_code(code: "user.errors.full_messages")
+Agent → evaluate_code(code: "user.errors.full_messages")
   → ["Email can't be blank"]
-Claude Code → continue_execution()
+Agent → continue_execution()
 ```
 
 ## Installation
@@ -50,9 +50,13 @@ RUBY_DEBUG_OPEN=true RUBY_DEBUG_PORT=12345 ruby my_script.rb
 rdbg --open my_script.rb
 ```
 
-### 2. Configure Claude Code
+### 2. Configure your MCP client
 
-Add to your `~/.claude/settings.json` (or project `.claude/settings.json`):
+girb-mcp works with any MCP-compatible client. Add it to your client's MCP server configuration:
+
+#### Claude Code
+
+Add to `~/.claude/settings.json` (or project `.claude/settings.json`):
 
 ```json
 {
@@ -78,9 +82,37 @@ If using Bundler:
 }
 ```
 
-### 3. Debug with Claude Code
+#### Gemini CLI
 
-Ask Claude Code to connect and debug:
+Add to `~/.gemini/settings.json`:
+
+```json
+{
+  "mcpServers": {
+    "girb-mcp": {
+      "command": "girb-mcp",
+      "args": []
+    }
+  }
+}
+```
+
+If using Bundler:
+
+```json
+{
+  "mcpServers": {
+    "girb-mcp": {
+      "command": "bundle",
+      "args": ["exec", "girb-mcp"]
+    }
+  }
+}
+```
+
+### 3. Start debugging
+
+Ask your agent to connect and debug:
 
 > "Connect to the debug session on port 12345 and show me the current state"
 
@@ -100,7 +132,7 @@ Usage: girb-mcp [options]
 
 ### STDIO transport (default)
 
-Standard transport for Claude Code and other MCP clients. No additional configuration needed.
+Standard transport for MCP clients. No additional configuration needed.
 
 ```bash
 girb-mcp
@@ -309,10 +341,10 @@ Agent: get_context()
 ## How it works
 
 ```
-┌─────────────┐  STDIO or Streamable HTTP ┌───────────┐    TCP/Unix Socket    ┌──────────────┐
-│ Claude Code  │ ◄──────────────────────► │ girb-mcp  │ ◄──────────────────► │ Ruby process │
-│ (MCP Client) │       (JSON-RPC)         │(MCP Server)│    debug gem proto   │  (rdbg)      │
-└─────────────┘                           └───────────┘                      └──────────────┘
+┌────────────┐  STDIO or Streamable HTTP  ┌───────────┐    TCP/Unix Socket    ┌──────────────┐
+│ MCP Client │ ◄────────────────────────► │ girb-mcp  │ ◄──────────────────► │ Ruby process │
+│            │        (JSON-RPC)          │(MCP Server)│    debug gem proto   │  (rdbg)      │
+└────────────┘                            └───────────┘                      └──────────────┘
 ```
 
 1. girb-mcp runs as an MCP server communicating via STDIO (default) or Streamable HTTP
