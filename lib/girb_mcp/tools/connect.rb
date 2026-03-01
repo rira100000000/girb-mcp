@@ -63,13 +63,49 @@ module GirbMcp
             description: "If false, skip automatic trap context escape. " \
                          "Default: true (automatically escape signal trap context when possible).",
           },
+          force_reset: {
+            type: "boolean",
+            description: "If true, forces cleanup of any existing connection and uses a longer timeout. " \
+                         "Use when a previous session left the debug gem stuck. Default: false.",
+          },
         },
       )
 
       class << self
+        FORCE_RESET_CONNECT_TIMEOUT = 30
+
         def call(path: nil, host: nil, port: nil, session_id: nil, remote: nil,
-                 restore_breakpoints: nil, auto_escape: nil, server_context:)
+                 restore_breakpoints: nil, auto_escape: nil, force_reset: nil, server_context:)
           manager = server_context[:session_manager]
+
+          # Force reset: clean up existing sessions aggressively before reconnecting
+          if force_reset
+            begin
+              existing_client = manager.client(session_id)
+              # Try auto_repause! (includes HTTP wake for remote) before resuming
+              unless existing_client.paused
+                begin
+                  existing_client.auto_repause!
+                rescue GirbMcp::Error
+                  # auto_repause failed — try HTTP wake + repause as last resort
+                  if existing_client.remote && existing_client.listen_ports&.any?
+                    begin
+                      existing_client.wake_io_blocked_process(existing_client.listen_ports.first)
+                      sleep DebugClient::HTTP_WAKE_SETTLE_TIME
+                      existing_client.repause(timeout: 5)
+                    rescue GirbMcp::Error
+                      # Best-effort
+                    end
+                  end
+                end
+              end
+              existing_client.send_command_no_wait("c", force: true) rescue nil
+              manager.disconnect(session_id)
+              sleep 1
+            rescue GirbMcp::Error
+              # No existing session or already disconnected
+            end
+          end
 
           # Clear saved breakpoints unless explicitly restoring
           manager.clear_breakpoint_specs unless restore_breakpoints
@@ -83,7 +119,11 @@ module GirbMcp
           pre_listen_ports = pre_target_pid ? detect_listen_ports(pre_target_pid) : []
 
           woke = false
-          connect_timeout = pre_listen_ports.any? ? 5 : nil
+          connect_timeout = if force_reset
+            FORCE_RESET_CONNECT_TIMEOUT
+          elsif pre_listen_ports.any?
+            5
+          end
 
           result = manager.connect(
             session_id: session_id,
@@ -102,6 +142,25 @@ module GirbMcp
           }
 
           client = manager.client(result[:session_id])
+
+          # Health check for force_reset: verify the session is responsive
+          if force_reset
+            begin
+              health = client.send_command("p :girb_health_check", timeout: 5)
+              unless health.include?("girb_health_check")
+                # Process is stuck — try to resume and let the caller reconnect
+                client.send_command_no_wait("c", force: true) rescue nil
+                manager.disconnect(result[:session_id])
+                raise ConnectionError, "Health check failed after force_reset. " \
+                  "The process may need to be restarted."
+              end
+            rescue GirbMcp::TimeoutError
+              client.send_command_no_wait("c", force: true) rescue nil
+              manager.disconnect(result[:session_id])
+              raise ConnectionError, "Health check timed out after force_reset. " \
+                "The process may need to be restarted."
+            end
+          end
 
           text = "Connected to debug session.\n" \
                  "  Session ID: #{result[:session_id]}\n" \
@@ -181,7 +240,15 @@ module GirbMcp
 
           MCP::Tool::Response.new([{ type: "text", text: text }])
         rescue GirbMcp::Error => e
-          MCP::Tool::Response.new([{ type: "text", text: "Error: #{e.message}" }])
+          error_text = "Error: #{e.message}"
+          unless force_reset
+            if e.message.include?("timed out") || e.message.include?("stuck")
+              error_text += "\n\nTip: Try 'connect' with force_reset: true to force cleanup of any stuck session."
+            end
+          else
+            error_text += "\n\nThe process may need to be restarted (kill and re-launch with 'rdbg --open')."
+          end
+          MCP::Tool::Response.new([{ type: "text", text: error_text }])
         end
 
         private
@@ -200,17 +267,9 @@ module GirbMcp
         end
 
         # Send a fire-and-forget HTTP GET to wake an IO-blocked process.
-        # The request itself doesn't matter — it just needs to break IO.select
-        # so the debug gem's pending pause trace point can fire.
+        # Delegates to DebugClient.wake_io_blocked_process (single implementation).
         def wake_process_via_http(listen_ports)
-          port = listen_ports.first
-          Thread.new do
-            Net::HTTP.start("localhost", port, open_timeout: 3, read_timeout: 3) do |http|
-              http.get("/")
-            end
-          rescue StandardError
-            # ignore — we only care about waking the process
-          end
+          DebugClient.wake_io_blocked_process(listen_ports.first)
         end
 
         # Detect TCP listen ports owned by the target process.

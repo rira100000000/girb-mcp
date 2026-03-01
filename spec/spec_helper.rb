@@ -56,6 +56,7 @@ def build_mock_client(connected: true, pid: "12345", paused: true, trap_context:
   allow(client).to receive(:interrupt_and_wait).and_return("")
   allow(client).to receive(:continue_and_wait).and_return({ type: :timeout, output: "" })
   allow(client).to receive(:wait_for_breakpoint).and_return({ type: :timeout, output: "" })
+  allow(client).to receive(:wake_io_blocked_process).and_return(Thread.new {})
   allow(client).to receive(:pending_http=)
   allow(client).to receive(:listen_ports=)
   allow(client).to receive(:escape_target=)

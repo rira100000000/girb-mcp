@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "set"
+require_relative "client_cleanup"
 
 module GirbMcp
   class SessionManager
@@ -374,71 +375,31 @@ module GirbMcp
       return unless info.client.connected?
       return if info.client.wait_thread # run_script sessions don't need resume
 
+      client = info.client
+
       # If not paused, try repause() to get control back (works for remote/local)
-      unless info.client.paused
+      unless client.paused
         begin
-          info.client.repause(timeout: 3)
+          client.repause(timeout: 3)
         rescue GirbMcp::Error
           # Best-effort
         end
-      end
 
-      return unless info.client.paused  # Can't send commands to a running process
-
-      deadline = Time.now + RESUME_DEADLINE
-
-      # Restore $stdout if evaluate_code left it redirected
-      remaining = deadline - Time.now
-      if remaining > 0
-        begin
-          info.client.send_command(
-            '$stdout = STDOUT if $stdout != STDOUT',
-            timeout: [remaining, 1].min,
-          )
-        rescue GirbMcp::Error
-          # Best-effort
-        end
-      end
-
-      # Delete all breakpoints FIRST so the process doesn't pause again
-      remaining = deadline - Time.now
-      if remaining > 0
-        begin
-          bp_output = info.client.send_command("info breakpoints", timeout: [remaining, 2].min)
-          unless bp_output.strip.empty?
-            bp_output.each_line do |line|
-              remaining = deadline - Time.now
-              break if remaining <= 0
-
-              if (match = line.match(/#(\d+)/))
-                info.client.send_command("delete #{match[1]}", timeout: [remaining, 2].min) rescue nil
-              end
-            end
+        # For remote clients with listen ports, try HTTP wake to break IO.select
+        if !client.paused && client.remote && client.listen_ports&.any?
+          begin
+            client.wake_io_blocked_process(client.listen_ports.first)
+            sleep DebugClient::HTTP_WAKE_SETTLE_TIME
+            client.repause(timeout: 5)
+          rescue GirbMcp::Error
+            # Best-effort
           end
-        rescue GirbMcp::Error
-          # Best-effort
         end
       end
 
-      # Restore original SIGINT handler
-      remaining = deadline - Time.now
-      if remaining > 0
-        begin
-          info.client.send_command(
-            "p $_girb_orig_int ? (trap('INT',$_girb_orig_int);$_girb_orig_int=nil;:ok) : nil",
-            timeout: [remaining, 2].min,
-          )
-        rescue GirbMcp::Error
-          # Best-effort
-        end
-      end
+      return unless client.paused # Can't send commands to a running process
 
-      # Resume. Use force: true in case a cleanup command timed out
-      # and set @paused=false even though the process is still paused.
-      info.client.send_command_no_wait("c", force: true)
-
-      # Wait for the debug gem to settle (see disconnect.rb for details).
-      info.client.ensure_paused(timeout: 2)
+      ClientCleanup.cleanup_and_resume(client, deadline: Time.now + RESUME_DEADLINE)
     rescue StandardError
       # Best-effort: don't let resume failure prevent cleanup
     end

@@ -18,6 +18,10 @@ RSpec.describe GirbMcp::DebugClient do
       expect(GirbMcp::DebugClient::ANSI_ESCAPE).to be_a(Regexp)
       expect("\e[31mred\e[0m".gsub(GirbMcp::DebugClient::ANSI_ESCAPE, "")).to eq("red")
     end
+
+    it "has HTTP wake settle time" do
+      expect(GirbMcp::DebugClient::HTTP_WAKE_SETTLE_TIME).to eq(0.3)
+    end
   end
 
   describe "#initialize" do
@@ -670,15 +674,17 @@ RSpec.describe GirbMcp::DebugClient do
         call_count += 1
         call_count == 1 ? nil : ""
       end
+      allow(client).to receive(:sleep)
 
       result = client.auto_repause!
       expect(result).to be true
       expect(client).to have_received(:repause).twice
+      expect(client).to have_received(:sleep).with(0.3)
     ensure
       server.close rescue nil
     end
 
-    it "raises SessionError when both repause attempts fail for remote clients" do
+    it "raises SessionError when all repause attempts fail for remote clients" do
       client = GirbMcp::DebugClient.new
       client.instance_variable_set(:@connected, true)
       client.instance_variable_set(:@paused, false)
@@ -686,11 +692,34 @@ RSpec.describe GirbMcp::DebugClient do
       client.instance_variable_set(:@pid, "99999")
 
       allow(client).to receive(:repause).and_return(nil)
+      allow(client).to receive(:sleep)
 
       expect { client.auto_repause! }.to raise_error(
         GirbMcp::SessionError, /could not be interrupted/
       )
-      expect(client).to have_received(:repause).twice
+      # 3 attempts: initial(3s) + retry(5s) + final(8s)
+      expect(client).to have_received(:repause).exactly(3).times
+    end
+
+    it "uses progressive sleep delays between remote repause retries" do
+      client = GirbMcp::DebugClient.new
+      client.instance_variable_set(:@connected, true)
+      client.instance_variable_set(:@paused, false)
+      client.instance_variable_set(:@remote, true)
+      client.instance_variable_set(:@pid, "99999")
+
+      # First two fail, third succeeds
+      call_count = 0
+      allow(client).to receive(:repause) do
+        call_count += 1
+        call_count == 3 ? "" : nil
+      end
+      allow(client).to receive(:sleep)
+
+      result = client.auto_repause!
+      expect(result).to be true
+      expect(client).to have_received(:sleep).with(0.3).ordered
+      expect(client).to have_received(:sleep).with(0.5).ordered
     end
 
     it "falls back to SIGINT when repause fails" do
@@ -834,6 +863,137 @@ RSpec.describe GirbMcp::DebugClient do
     ensure
       server.close rescue nil
       server_thread&.join(2)
+    end
+  end
+
+  describe ".wake_io_blocked_process (class method)" do
+    it "sends HTTP GET to 127.0.0.1 on the given port in a background thread" do
+      http_double = instance_double(Net::HTTP)
+      allow(Net::HTTP).to receive(:new).with("127.0.0.1", 3000).and_return(http_double)
+      allow(http_double).to receive(:open_timeout=)
+      allow(http_double).to receive(:read_timeout=)
+      allow(http_double).to receive(:get).with("/").and_return(nil)
+
+      thread = GirbMcp::DebugClient.wake_io_blocked_process(3000)
+      thread.join(2)
+
+      expect(Net::HTTP).to have_received(:new).with("127.0.0.1", 3000)
+      expect(http_double).to have_received(:get).with("/")
+    end
+
+    it "silently ignores HTTP errors" do
+      allow(Net::HTTP).to receive(:new).and_raise(Errno::ECONNREFUSED)
+
+      thread = GirbMcp::DebugClient.wake_io_blocked_process(3000)
+      expect { thread.join(2) }.not_to raise_error
+    end
+  end
+
+  describe "#wake_io_blocked_process (instance delegate)" do
+    it "delegates to class method" do
+      client = GirbMcp::DebugClient.new
+      thread_double = instance_double(Thread)
+      allow(GirbMcp::DebugClient).to receive(:wake_io_blocked_process).with(3000).and_return(thread_double)
+
+      result = client.wake_io_blocked_process(3000)
+      expect(result).to eq(thread_double)
+      expect(GirbMcp::DebugClient).to have_received(:wake_io_blocked_process).with(3000)
+    end
+  end
+
+  describe "#auto_repause! (HTTP wake for remote)" do
+    it "tries HTTP wake when remote repause fails and listen_ports available" do
+      client, server = setup_client_with_socket
+      client.instance_variable_set(:@paused, false)
+      client.instance_variable_set(:@remote, true)
+      client.listen_ports = [3000]
+
+      # First two repause calls fail, HTTP wake triggers, third succeeds
+      call_count = 0
+      allow(client).to receive(:repause) do
+        call_count += 1
+        call_count == 3 ? "" : nil
+      end
+      allow(client).to receive(:sleep)
+      wake_thread = instance_double(Thread)
+      allow(wake_thread).to receive(:join)
+      allow(client).to receive(:wake_io_blocked_process).and_return(wake_thread)
+
+      result = client.auto_repause!
+      expect(result).to be true
+      expect(client).to have_received(:wake_io_blocked_process).with(3000)
+      expect(wake_thread).to have_received(:join).with(1)
+    ensure
+      server.close rescue nil
+    end
+
+    it "skips HTTP wake when listen_ports is empty" do
+      client = GirbMcp::DebugClient.new
+      client.instance_variable_set(:@connected, true)
+      client.instance_variable_set(:@paused, false)
+      client.instance_variable_set(:@remote, true)
+      client.instance_variable_set(:@pid, "99999")
+      client.listen_ports = []
+
+      allow(client).to receive(:repause).and_return(nil)
+      allow(client).to receive(:sleep)
+      allow(client).to receive(:wake_io_blocked_process)
+
+      expect { client.auto_repause! }.to raise_error(GirbMcp::SessionError)
+      expect(client).not_to have_received(:wake_io_blocked_process)
+    end
+  end
+
+  describe "#auto_repause! (protocol sync after trap escape)" do
+    it "sends p nil after successful trap escape" do
+      client, server = setup_client_with_socket
+      client.instance_variable_set(:@paused, false)
+      client.listen_ports = [3000]
+      client.escape_target = { file: "/gems/metal.rb", line: 211, path: "/users" }
+
+      # Use Queue for synchronization
+      bp_written = Queue.new
+
+      http_double = instance_double(Net::HTTP)
+      allow(Net::HTTP).to receive(:new).and_return(http_double)
+      allow(http_double).to receive(:open_timeout=)
+      allow(http_double).to receive(:read_timeout=)
+      allow(http_double).to receive(:get) { bp_written.pop; Net::HTTPResponse }
+      allow(http_double).to receive(:finish)
+
+      allow(Process).to receive(:kill).with("URG", 12345)
+      Thread.new do
+        sleep 0.05
+        # repause
+        server.write("input 12345\n")
+
+        # break command
+        server.gets
+        server.write("out #1  BP - Line  /gems/metal.rb:211\n")
+        server.write("input 12345\n")
+
+        # continue command
+        server.gets
+        server.write("out Stop by #1  BP - Line  /gems/metal.rb:211\n")
+        server.write("input 12345\n")
+        bp_written.push(true)
+
+        # delete command
+        server.gets
+        server.write("out \n")
+        server.write("input 12345\n")
+
+        # protocol sync: p nil
+        server.gets
+        server.write("out => nil\n")
+        server.write("input 12345\n")
+      end
+
+      result = client.auto_repause!
+      expect(result).to be true
+      expect(client.trap_context).to be false
+    ensure
+      server.close rescue nil
     end
   end
 

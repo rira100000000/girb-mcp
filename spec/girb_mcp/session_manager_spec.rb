@@ -546,6 +546,7 @@ RSpec.describe GirbMcp::SessionManager do
       allow(client).to receive(:send_command).with("info breakpoints", timeout: anything).and_return(bp_output)
       allow(client).to receive(:send_command).with("delete 0", timeout: anything).and_return("")
       allow(client).to receive(:send_command).with("delete 2", timeout: anything).and_return("")
+      allow(client).to receive(:paused).and_return(true, true, false)
 
       info = GirbMcp::SessionManager::SessionInfo.new(
         client: client, connected_at: Time.now, last_activity_at: Time.now,
@@ -594,8 +595,9 @@ RSpec.describe GirbMcp::SessionManager do
     it "proceeds with cleanup when repause succeeds for not-paused client" do
       client = build_mock_client(paused: false)
       allow(client).to receive(:repause).with(timeout: 3).and_return("")
-      # After repause, client is paused
-      allow(client).to receive(:paused).and_return(false, true)
+      # Sequence: unless paused(false) → repause → HTTP wake check paused(true) →
+      # return unless paused(true) → cleanup → stale loop paused(false)
+      allow(client).to receive(:paused).and_return(false, true, true, false)
 
       info = GirbMcp::SessionManager::SessionInfo.new(
         client: client, connected_at: Time.now, last_activity_at: Time.now,
@@ -607,11 +609,88 @@ RSpec.describe GirbMcp::SessionManager do
       expect(client).to have_received(:send_command_no_wait).with("c", force: true)
     end
 
+    it "retries c when stale pause is detected after resume" do
+      client = build_mock_client
+      allow(client).to receive(:send_command).and_return("")
+
+      # paused stays true twice (initial + after first c), then false
+      paused_values = [true, true, true, true, true, false]
+      call_index = 0
+      allow(client).to receive(:paused) do
+        val = paused_values[[call_index, paused_values.size - 1].min]
+        call_index += 1
+        val
+      end
+
+      info = GirbMcp::SessionManager::SessionInfo.new(
+        client: client, connected_at: Time.now, last_activity_at: Time.now,
+      )
+
+      manager.send(:resume_before_disconnect, info)
+
+      expect(client).to have_received(:send_command_no_wait)
+        .with("c", force: true).at_least(:twice)
+    end
+
+    it "limits stale pause retries in resume_before_disconnect" do
+      client = build_mock_client
+      allow(client).to receive(:send_command).and_return("")
+      allow(client).to receive(:paused).and_return(true)
+
+      info = GirbMcp::SessionManager::SessionInfo.new(
+        client: client, connected_at: Time.now, last_activity_at: Time.now,
+      )
+
+      manager.send(:resume_before_disconnect, info)
+
+      # 1 initial + at most 2 retries = at most 3
+      expect(client).to have_received(:send_command_no_wait)
+        .with("c", force: true).at_most(3).times
+    end
+
+    it "tries HTTP wake for remote client with listen_ports when repause fails" do
+      client = build_mock_client(paused: false, remote: true)
+      allow(client).to receive(:listen_ports).and_return([3000])
+      allow(client).to receive(:repause).with(timeout: 3).and_return(nil)
+      wake_thread = instance_double(Thread)
+      allow(client).to receive(:wake_io_blocked_process).and_return(wake_thread)
+      allow(client).to receive(:repause).with(timeout: 5).and_return("")
+      # After HTTP wake + repause, client is paused; after cleanup, not paused
+      allow(client).to receive(:paused).and_return(false, false, true, false)
+
+      info = GirbMcp::SessionManager::SessionInfo.new(
+        client: client, connected_at: Time.now, last_activity_at: Time.now,
+      )
+
+      manager.send(:resume_before_disconnect, info)
+
+      expect(client).to have_received(:wake_io_blocked_process).with(3000)
+      expect(client).to have_received(:repause).with(timeout: 5)
+      expect(client).to have_received(:send_command_no_wait).with("c", force: true)
+    end
+
+    it "skips HTTP wake for remote client without listen_ports" do
+      client = build_mock_client(paused: false, remote: true)
+      allow(client).to receive(:listen_ports).and_return([])
+      allow(client).to receive(:repause).with(timeout: 3).and_return(nil)
+      allow(client).to receive(:paused).and_return(false)
+
+      info = GirbMcp::SessionManager::SessionInfo.new(
+        client: client, connected_at: Time.now, last_activity_at: Time.now,
+      )
+
+      manager.send(:resume_before_disconnect, info)
+
+      expect(client).not_to have_received(:wake_io_blocked_process)
+      expect(client).not_to have_received(:send_command_no_wait)
+    end
+
     it "continues even when BP info fails" do
       client = build_mock_client
       allow(client).to receive(:send_command).with("info breakpoints", timeout: anything).and_raise(
         GirbMcp::TimeoutError, "timeout"
       )
+      allow(client).to receive(:paused).and_return(true, true, false)
 
       info = GirbMcp::SessionManager::SessionInfo.new(
         client: client, connected_at: Time.now, last_activity_at: Time.now,

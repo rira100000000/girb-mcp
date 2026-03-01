@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require "mcp"
+require_relative "../client_cleanup"
 
 module GirbMcp
   module Tools
@@ -107,6 +108,28 @@ module GirbMcp
                   # Best-effort
                 end
               end
+
+              # 3. For remote connections, try HTTP wake + repause
+              unless client.paused
+                if client.remote
+                  # Try HTTP wake to break IO.select, then repause
+                  if client.listen_ports&.any?
+                    begin
+                      client.wake_io_blocked_process(client.listen_ports.first)
+                      sleep DebugClient::HTTP_WAKE_SETTLE_TIME
+                      client.repause(timeout: 5)
+                    rescue GirbMcp::Error
+                      # Best-effort
+                    end
+                  else
+                    begin
+                      client.repause(timeout: 5)
+                    rescue GirbMcp::Error
+                      # Best-effort
+                    end
+                  end
+                end
+              end
             end
 
             if client.paused
@@ -137,69 +160,7 @@ module GirbMcp
         private
 
         def best_effort_cleanup(client)
-          deadline = Time.now + CLEANUP_DEADLINE
-
-          # Restore $stdout if evaluate_code left it redirected (its ensure block
-          # fails when send_command timeout sets @paused=false).
-          remaining = deadline - Time.now
-          if remaining > 0
-            begin
-              client.send_command(
-                '$stdout = STDOUT if $stdout != STDOUT',
-                timeout: [remaining, 1].min,
-              )
-            rescue GirbMcp::Error
-              # Best-effort
-            end
-          end
-
-          # Delete all breakpoints FIRST — this is the most critical step.
-          # If breakpoints remain and the process resumes without a client,
-          # it will hit a breakpoint and become stuck with no way to continue.
-          remaining = deadline - Time.now
-          if remaining > 0
-            begin
-              bp_output = client.send_command("info breakpoints", timeout: [remaining, 2].min)
-              unless bp_output.strip.empty?
-                bp_output.each_line do |line|
-                  remaining = deadline - Time.now
-                  break if remaining <= 0
-
-                  if (match = line.match(/#(\d+)/))
-                    client.send_command("delete #{match[1]}", timeout: [remaining, 2].min) rescue nil
-                  end
-                end
-              end
-            rescue GirbMcp::Error
-              # Best-effort
-            end
-          end
-
-          # Restore original SIGINT handler
-          remaining = deadline - Time.now
-          if remaining > 0
-            begin
-              client.send_command(
-                "p $_girb_orig_int ? (trap('INT',$_girb_orig_int);$_girb_orig_int=nil;:ok) : nil",
-                timeout: [remaining, 2].min,
-              )
-            rescue GirbMcp::Error
-              # Best-effort
-            end
-          end
-
-          # Resume the process. If a cleanup command timed out (setting
-          # @paused=false even though the process is actually still paused),
-          # use force: true to bypass the @paused check.
-          client.send_command_no_wait("c", force: true)
-
-          # Wait for the debug gem to settle after 'c'. After SIGINT recovery,
-          # the main thread needs to finish the interrupted eval and re-enter
-          # the command loop (sending `input PID`). If we close the socket
-          # before this completes, the debug gem's cleanup_reader closes @q_msg
-          # while the main thread is still pushing results, leaving it stuck
-          # on a futex. Draining here gives the debug gem time to settle.
-          client.ensure_paused(timeout: 2)
+          ClientCleanup.cleanup_and_resume(client, deadline: Time.now + CLEANUP_DEADLINE)
         end
       end
     end

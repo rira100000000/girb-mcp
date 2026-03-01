@@ -921,6 +921,154 @@ RSpec.describe GirbMcp::Tools::Connect do
       end
     end
 
+    context "force_reset option" do
+      it "disconnects existing session before reconnecting" do
+        allow(client).to receive(:send_command_no_wait)
+        allow(client).to receive(:send_command).and_return('=> :girb_health_check')
+        allow(manager).to receive(:disconnect)
+
+        response = described_class.call(force_reset: true, server_context: server_context)
+        text = response_text(response)
+
+        expect(client).to have_received(:send_command_no_wait).with("c", force: true)
+        expect(manager).to have_received(:disconnect).at_least(:once)
+        expect(text).to include("Connected to debug session")
+      end
+
+      it "calls auto_repause! when existing client is not paused" do
+        allow(client).to receive(:paused).and_return(false)
+        allow(client).to receive(:send_command).and_return('=> :girb_health_check')
+        allow(manager).to receive(:disconnect)
+
+        response = described_class.call(force_reset: true, server_context: server_context)
+        text = response_text(response)
+
+        expect(client).to have_received(:auto_repause!)
+        expect(text).to include("Connected to debug session")
+      end
+
+      it "falls back to HTTP wake when auto_repause! fails for remote client" do
+        allow(client).to receive(:paused).and_return(false)
+        allow(client).to receive(:remote).and_return(true)
+        allow(client).to receive(:listen_ports).and_return([3000])
+        allow(client).to receive(:auto_repause!).and_raise(GirbMcp::SessionError, "failed")
+        allow(client).to receive(:wake_io_blocked_process).and_return(Thread.new {})
+        allow(client).to receive(:repause).and_return("")
+        allow(client).to receive(:send_command).and_return('=> :girb_health_check')
+        allow(manager).to receive(:disconnect)
+
+        response = described_class.call(force_reset: true, server_context: server_context)
+        text = response_text(response)
+
+        expect(client).to have_received(:wake_io_blocked_process).with(3000)
+        expect(text).to include("Connected to debug session")
+      end
+
+      it "skips auto_repause! when existing client is already paused" do
+        allow(client).to receive(:paused).and_return(true)
+        allow(client).to receive(:send_command).and_return('=> :girb_health_check')
+        allow(manager).to receive(:disconnect)
+
+        response = described_class.call(force_reset: true, server_context: server_context)
+        text = response_text(response)
+
+        expect(client).not_to have_received(:auto_repause!)
+        expect(text).to include("Connected to debug session")
+      end
+
+      it "uses longer connect timeout" do
+        allow(client).to receive(:send_command).and_return('=> :girb_health_check')
+
+        expect(manager).to receive(:connect) do |**kwargs, &_block|
+          expect(kwargs[:connect_timeout]).to eq(30)
+          { success: true, pid: "12345", output: "ok", session_id: "session_12345" }
+        end
+
+        described_class.call(force_reset: true, server_context: server_context)
+      end
+
+      it "performs health check after connecting" do
+        allow(client).to receive(:send_command)
+          .with("p :girb_health_check", timeout: 5)
+          .and_return('=> :girb_health_check')
+
+        described_class.call(force_reset: true, server_context: server_context)
+
+        expect(client).to have_received(:send_command)
+          .with("p :girb_health_check", timeout: 5)
+      end
+
+      it "disconnects and reports error when health check fails" do
+        allow(client).to receive(:send_command)
+          .with("p :girb_health_check", timeout: 5)
+          .and_return('=> nil')
+
+        response = described_class.call(force_reset: true, server_context: server_context)
+        text = response_text(response)
+
+        expect(text).to include("Health check failed")
+        expect(text).to include("restarted")
+      end
+
+      it "disconnects and reports error when health check times out" do
+        allow(client).to receive(:send_command)
+          .with("p :girb_health_check", timeout: 5)
+          .and_raise(GirbMcp::TimeoutError, "timeout")
+
+        response = described_class.call(force_reset: true, server_context: server_context)
+        text = response_text(response)
+
+        expect(text).to include("Health check timed out")
+        expect(text).to include("restarted")
+      end
+
+      it "handles no existing session gracefully" do
+        # First client() call raises (no session), second succeeds
+        call_count = 0
+        allow(manager).to receive(:client) do |*_args|
+          call_count += 1
+          if call_count == 1
+            raise GirbMcp::SessionError, "No active session"
+          else
+            client
+          end
+        end
+        allow(client).to receive(:send_command)
+          .with("p :girb_health_check", timeout: 5)
+          .and_return('=> :girb_health_check')
+
+        response = described_class.call(force_reset: true, server_context: server_context)
+        text = response_text(response)
+
+        expect(text).to include("Connected to debug session")
+      end
+    end
+
+    context "error messages suggest force_reset" do
+      it "suggests force_reset when connection times out" do
+        allow(manager).to receive(:connect).and_raise(
+          GirbMcp::ConnectionError, "Connection timed out: the debug process did not respond."
+        )
+
+        response = described_class.call(server_context: server_context)
+        text = response_text(response)
+
+        expect(text).to include("force_reset: true")
+      end
+
+      it "suggests restart when force_reset also fails" do
+        allow(manager).to receive(:connect).and_raise(
+          GirbMcp::ConnectionError, "Connection timed out: the debug process did not respond."
+        )
+
+        response = described_class.call(force_reset: true, server_context: server_context)
+        text = response_text(response)
+
+        expect(text).to include("restarted")
+        expect(text).not_to include("force_reset: true")
+      end
+    end
+
     context "Docker TCP fallback for listen port detection" do
       let(:client) { build_mock_client(remote: true) }
       let(:manager) { build_mock_manager(client: client) }

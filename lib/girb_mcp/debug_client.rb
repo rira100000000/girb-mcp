@@ -12,6 +12,7 @@ module GirbMcp
     DEFAULT_TIMEOUT = 15
     CONTINUE_TIMEOUT = 30
     DISCONNECT_SOCKET_TIMEOUT = 2
+    HTTP_WAKE_SETTLE_TIME = 0.3
 
     # ANSI escape code pattern
     ANSI_ESCAPE = /\e\[[0-9;]*m/
@@ -380,10 +381,25 @@ module GirbMcp
       if result.nil?
         if @remote
           # Remote: interrupt_and_wait always returns nil (SIGINT can't reach the
-          # target process in a different PID namespace). Retry repause instead —
-          # the first `pause` message may still be in the TCP buffer and the second
-          # drain_socket_buffer call inside repause can pick up the response.
+          # target process in a different PID namespace). Retry repause with
+          # progressive delays — the reader thread may need time to process
+          # the `pause` message, especially over TCP.
+          sleep HTTP_WAKE_SETTLE_TIME
           result = repause(timeout: 5)
+          # If repause still fails and we have listen ports, the process is likely
+          # blocked in IO.select (SA_RESTART prevents SIGURG from breaking through).
+          # Send an HTTP GET to wake it, then retry repause.
+          if result.nil? && @listen_ports&.any?
+            debug_log("auto_repause!: waking IO-blocked process via HTTP")
+            wake_thread = wake_io_blocked_process(@listen_ports.first)
+            sleep HTTP_WAKE_SETTLE_TIME
+            result = repause(timeout: 5)
+            wake_thread.join(1) rescue nil
+          end
+          if result.nil?
+            sleep 0.5
+            result = repause(timeout: 8)
+          end
         else
           # Local: SIGINT can interrupt IO.select and similar C-level blocking calls.
           result = interrupt_and_wait(timeout: 5)
@@ -404,6 +420,21 @@ module GirbMcp
         debug_log("auto_repause!: attempting trap escape (trap=#{@trap_context})")
         attempt_trap_escape!
         debug_log("auto_repause!: after trap escape (trap=#{@trap_context})")
+
+        # Protocol sync: after attempt_trap_escape!, TCP in-flight data from
+        # the escape sequence (break, continue, delete commands) may still be
+        # arriving. Send a no-op command to perform a full round-trip and
+        # consume any stale data before the next real command.
+        if @paused
+          begin
+            send_command("p nil", timeout: 3)
+          rescue GirbMcp::Error
+            # Best-effort sync. If this times out, send_command sets @paused=false.
+            # Restore it: the process was confirmed paused at the escape breakpoint,
+            # and drain_stale_data on the next command will consume the stale response.
+            @paused = true
+          end
+        end
       end
 
       true
@@ -570,6 +601,25 @@ module GirbMcp
         dir = File.join(tmpdir, "rdbg-#{uid}")
         dir if Dir.exist?(dir)
       end
+    end
+
+    # Wake an IO-blocked process (e.g., Puma in IO.select) by sending an
+    # HTTP GET in a background thread. The request itself doesn't matter —
+    # it just needs to break IO.select so the debug gem's pending pause
+    # trace point can fire. Returns the background thread.
+    def self.wake_io_blocked_process(port)
+      Thread.new do
+        http = Net::HTTP.new("127.0.0.1", port)
+        http.open_timeout = 3
+        http.read_timeout = 3
+        http.get("/")
+      rescue StandardError
+        # Ignore — we only care about waking IO.select
+      end
+    end
+
+    def wake_io_blocked_process(port)
+      self.class.wake_io_blocked_process(port)
     end
 
     private
