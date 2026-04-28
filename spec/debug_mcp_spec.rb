@@ -3,7 +3,7 @@
 RSpec.describe DebugMcp do
   it "has a version number" do
     expect(DebugMcp::VERSION).not_to be_nil
-    expect(DebugMcp::VERSION).to eq("0.1.1")
+    expect(DebugMcp::VERSION).to eq("0.1.2")
   end
 
   describe DebugMcp::Error do

@@ -282,17 +282,17 @@ RSpec.describe DebugMcp::Tools::Disconnect do
     it "restores SIGINT handler on disconnect for connect sessions" do
       allow(client).to receive(:send_command).and_return("")
       allow(client).to receive(:send_command)
-        .with(/\$_girb_orig_int/, timeout: anything)
+        .with(/\$_debug_mcp_orig_int/, timeout: anything)
         .and_return("=> :ok")
 
       described_class.call(server_context: server_context)
 
-      expect(client).to have_received(:send_command).with(/\$_girb_orig_int.*trap/, timeout: anything)
+      expect(client).to have_received(:send_command).with(/\$_debug_mcp_orig_int.*trap/, timeout: anything)
     end
 
     it "does not fail disconnect when SIGINT restore fails" do
       allow(client).to receive(:send_command)
-        .with(/\$_girb_orig_int/, timeout: anything)
+        .with(/\$_debug_mcp_orig_int/, timeout: anything)
         .and_raise(DebugMcp::ConnectionError, "lost connection")
       allow(client).to receive(:send_command).and_return("")
 
@@ -310,7 +310,7 @@ RSpec.describe DebugMcp::Tools::Disconnect do
 
       described_class.call(server_context: server_context)
 
-      expect(client).not_to have_received(:send_command).with(/\$_girb_orig_int/)
+      expect(client).not_to have_received(:send_command).with(/\$_debug_mcp_orig_int/)
     end
   end
 end

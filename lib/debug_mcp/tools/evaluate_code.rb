@@ -93,7 +93,7 @@ module DebugMcp
             # Use StringIO directly (always available in debug gem sessions)
             # instead of `require "stringio"` which hangs in trap context.
             client.send_command(
-              '$__girb_cap = StringIO.new; $stdout = $__girb_cap',
+              '$__debug_mcp_cap = StringIO.new; $stdout = $__debug_mcp_cap',
             )
             stdout_redirected = true
 
@@ -101,7 +101,7 @@ module DebugMcp
             # The debug gem protocol is line-based, so multi-line code must be
             # encoded into a single line to avoid breaking the protocol.
             # The code is wrapped in begin/rescue to capture exceptions in
-            # $__girb_err, allowing us to distinguish errors from normal nil.
+            # $__debug_mcp_err, allowing us to distinguish errors from normal nil.
             output = client.send_command(build_eval_command(code))
 
             # Restore $stdout and read captured output in a single round-trip
@@ -173,17 +173,17 @@ module DebugMcp
         # Only uses simple expressions that are safe in restricted context.
         def call_in_trap_context(client, code, warning_text: nil)
           # Use `p` instead of `pp` (pp may trigger autoload in some cases)
-          # Use $__girb_err pattern (same as normal path) for structured error detection.
+          # Use $__debug_mcp_err pattern (same as normal path) for structured error detection.
           # Single-line code only; multi-line code with newlines can't use Base64 (require hangs)
           if code.include?("\n")
             output = client.send_command(
-              "$__girb_err=nil; p(begin; eval(#{code.gsub("\n", ";").inspect}); " \
-              'rescue => __e; $__girb_err="#{__e.class}: #{__e.message}"; nil; end)',
+              "$__debug_mcp_err=nil; p(begin; eval(#{code.gsub("\n", ";").inspect}); " \
+              'rescue => __e; $__debug_mcp_err="#{__e.class}: #{__e.message}"; nil; end)',
             )
           else
             output = client.send_command(
-              "$__girb_err=nil; p(begin; (#{code}); " \
-              'rescue => __e; $__girb_err="#{__e.class}: #{__e.message}"; nil; end)',
+              "$__debug_mcp_err=nil; p(begin; (#{code}); " \
+              'rescue => __e; $__debug_mcp_err="#{__e.class}: #{__e.message}"; nil; end)',
             )
           end
 
@@ -221,7 +221,7 @@ module DebugMcp
 
         # Build a debug command that evaluates the given code.
         # The code is wrapped in begin/rescue to capture exceptions in
-        # $__girb_err. On error, the rescue returns nil (which pp shows),
+        # $__debug_mcp_err. On error, the rescue returns nil (which pp shows),
         # but the error is preserved in the global variable for structured
         # error reporting.
         # Base64-encoding is used when the code contains newlines (the debug
@@ -230,19 +230,19 @@ module DebugMcp
         def build_eval_command(code)
           if code.include?("\n") || !code.ascii_only?
             encoded = Base64.strict_encode64(code.encode(Encoding::UTF_8))
-            "$__girb_err=nil; pp(begin; require 'base64'; " \
+            "$__debug_mcp_err=nil; pp(begin; require 'base64'; " \
             "eval(::Base64.decode64('#{encoded}').force_encoding('UTF-8'), binding); " \
-            'rescue => __e; $__girb_err="#{__e.class}: #{__e.message}"; nil; end)'
+            'rescue => __e; $__debug_mcp_err="#{__e.class}: #{__e.message}"; nil; end)'
           else
-            "$__girb_err=nil; pp(begin; (#{code}); " \
-            'rescue => __e; $__girb_err="#{__e.class}: #{__e.message}"; nil; end)'
+            "$__debug_mcp_err=nil; pp(begin; (#{code}); " \
+            'rescue => __e; $__debug_mcp_err="#{__e.class}: #{__e.message}"; nil; end)'
           end
         end
 
-        # Check $__girb_err for a captured exception from the eval wrapper.
+        # Check $__debug_mcp_err for a captured exception from the eval wrapper.
         # Returns "ClassName: message" string, or nil if no error.
         def read_eval_error(client)
-          result = client.send_command("p $__girb_err")
+          result = client.send_command("p $__debug_mcp_err")
           cleaned = result.strip.sub(/\A=> /, "")
           return nil if cleaned == "nil" || cleaned.empty?
 
@@ -255,7 +255,7 @@ module DebugMcp
         # Restore $stdout and read captured output in a single command.
         # Combines two round-trips into one.
         def restore_and_read_stdout(client)
-          result = client.send_command("$stdout = STDOUT; p $__girb_cap&.string")
+          result = client.send_command("$stdout = STDOUT; p $__debug_mcp_cap&.string")
           parse_captured_stdout(result)
         rescue DebugMcp::Error
           nil

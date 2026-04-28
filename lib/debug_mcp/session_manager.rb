@@ -142,7 +142,7 @@ module DebugMcp
 
           pid = info.client.pid
           # Restore original SIGINT handler (best-effort, raw protocol).
-          restore_cmd = "p $_girb_orig_int ? (trap('INT',$_girb_orig_int);$_girb_orig_int=nil;:ok) : nil"
+          restore_cmd = "p $_debug_mcp_orig_int ? (trap('INT',$_debug_mcp_orig_int);$_debug_mcp_orig_int=nil;:ok) : nil"
           socket.write("command #{pid} 500 #{restore_cmd}\n".b) rescue nil
           # Delete breakpoints #0-#9 (best-effort) then continue.
           # In signal trap context we can't use send_command, so write raw

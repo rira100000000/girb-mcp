@@ -1058,7 +1058,7 @@ module DebugMcp
       nil # Timeout
     end
 
-    DEBUG_LOG_PATH = "/tmp/girb_debug.log"
+    DEBUG_LOG_PATH = "/tmp/debug_mcp.log"
 
     def debug_log(msg)
       File.open(DEBUG_LOG_PATH, "a") do |f|

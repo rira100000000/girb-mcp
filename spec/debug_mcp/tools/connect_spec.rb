@@ -852,17 +852,17 @@ RSpec.describe DebugMcp::Tools::Connect do
     context "SIGINT force-quit handler" do
       it "installs SIGINT handler on connect" do
         allow(client).to receive(:send_command)
-          .with(/\$_girb_orig_int/)
+          .with(/\$_debug_mcp_orig_int/)
           .and_return('=> :ok')
 
         described_class.call(server_context: server_context)
 
-        expect(client).to have_received(:send_command).with(/\$_girb_orig_int/)
+        expect(client).to have_received(:send_command).with(/\$_debug_mcp_orig_int/)
       end
 
       it "does not fail connect when handler installation fails" do
         allow(client).to receive(:send_command)
-          .with(/\$_girb_orig_int/)
+          .with(/\$_debug_mcp_orig_int/)
           .and_raise(DebugMcp::ConnectionError, "lost connection")
 
         response = described_class.call(server_context: server_context)
@@ -924,7 +924,7 @@ RSpec.describe DebugMcp::Tools::Connect do
     context "force_reset option" do
       it "disconnects existing session before reconnecting" do
         allow(client).to receive(:send_command_no_wait)
-        allow(client).to receive(:send_command).and_return('=> :girb_health_check')
+        allow(client).to receive(:send_command).and_return('=> :debug_mcp_health_check')
         allow(manager).to receive(:disconnect)
 
         response = described_class.call(force_reset: true, server_context: server_context)
@@ -937,7 +937,7 @@ RSpec.describe DebugMcp::Tools::Connect do
 
       it "calls auto_repause! when existing client is not paused" do
         allow(client).to receive(:paused).and_return(false)
-        allow(client).to receive(:send_command).and_return('=> :girb_health_check')
+        allow(client).to receive(:send_command).and_return('=> :debug_mcp_health_check')
         allow(manager).to receive(:disconnect)
 
         response = described_class.call(force_reset: true, server_context: server_context)
@@ -954,7 +954,7 @@ RSpec.describe DebugMcp::Tools::Connect do
         allow(client).to receive(:auto_repause!).and_raise(DebugMcp::SessionError, "failed")
         allow(client).to receive(:wake_io_blocked_process).and_return(Thread.new {})
         allow(client).to receive(:check_paused).and_return("")
-        allow(client).to receive(:send_command).and_return('=> :girb_health_check')
+        allow(client).to receive(:send_command).and_return('=> :debug_mcp_health_check')
         allow(manager).to receive(:disconnect)
 
         response = described_class.call(force_reset: true, server_context: server_context)
@@ -966,7 +966,7 @@ RSpec.describe DebugMcp::Tools::Connect do
 
       it "skips auto_repause! when existing client is already paused" do
         allow(client).to receive(:paused).and_return(true)
-        allow(client).to receive(:send_command).and_return('=> :girb_health_check')
+        allow(client).to receive(:send_command).and_return('=> :debug_mcp_health_check')
         allow(manager).to receive(:disconnect)
 
         response = described_class.call(force_reset: true, server_context: server_context)
@@ -977,7 +977,7 @@ RSpec.describe DebugMcp::Tools::Connect do
       end
 
       it "uses longer connect timeout" do
-        allow(client).to receive(:send_command).and_return('=> :girb_health_check')
+        allow(client).to receive(:send_command).and_return('=> :debug_mcp_health_check')
 
         expect(manager).to receive(:connect) do |**kwargs, &_block|
           expect(kwargs[:connect_timeout]).to eq(30)
@@ -989,18 +989,18 @@ RSpec.describe DebugMcp::Tools::Connect do
 
       it "performs health check after connecting" do
         allow(client).to receive(:send_command)
-          .with("p :girb_health_check", timeout: 5)
-          .and_return('=> :girb_health_check')
+          .with("p :debug_mcp_health_check", timeout: 5)
+          .and_return('=> :debug_mcp_health_check')
 
         described_class.call(force_reset: true, server_context: server_context)
 
         expect(client).to have_received(:send_command)
-          .with("p :girb_health_check", timeout: 5)
+          .with("p :debug_mcp_health_check", timeout: 5)
       end
 
       it "disconnects and reports error when health check fails" do
         allow(client).to receive(:send_command)
-          .with("p :girb_health_check", timeout: 5)
+          .with("p :debug_mcp_health_check", timeout: 5)
           .and_return('=> nil')
 
         response = described_class.call(force_reset: true, server_context: server_context)
@@ -1012,7 +1012,7 @@ RSpec.describe DebugMcp::Tools::Connect do
 
       it "disconnects and reports error when health check times out" do
         allow(client).to receive(:send_command)
-          .with("p :girb_health_check", timeout: 5)
+          .with("p :debug_mcp_health_check", timeout: 5)
           .and_raise(DebugMcp::TimeoutError, "timeout")
 
         response = described_class.call(force_reset: true, server_context: server_context)
@@ -1034,8 +1034,8 @@ RSpec.describe DebugMcp::Tools::Connect do
           end
         end
         allow(client).to receive(:send_command)
-          .with("p :girb_health_check", timeout: 5)
-          .and_return('=> :girb_health_check')
+          .with("p :debug_mcp_health_check", timeout: 5)
+          .and_return('=> :debug_mcp_health_check')
 
         response = described_class.call(force_reset: true, server_context: server_context)
         text = response_text(response)

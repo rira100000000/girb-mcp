@@ -35,6 +35,12 @@ gem install debug-mcp
 
 Requires Ruby >= 3.2.0.
 
+> **Migrating from `girb-mcp`?** This gem was previously published as `girb-mcp`
+> on RubyGems (last version: 0.1.1). It was renamed to `debug-mcp` starting from
+> 0.1.2 to better reflect its purpose. Replace `gem "girb-mcp"` with
+> `gem "debug-mcp"` and update your MCP client config (`girb-mcp` → `debug-mcp`,
+> `girb-rails` → `debug-rails`). See [CHANGELOG.md](CHANGELOG.md) for details.
+
 ## Quick Start
 
 ### 1. Start a Ruby process with the debugger

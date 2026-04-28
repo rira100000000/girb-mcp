@@ -147,8 +147,8 @@ module DebugMcp
           # Health check for force_reset: verify the session is responsive
           if force_reset
             begin
-              health = client.send_command("p :girb_health_check", timeout: 5)
-              unless health.include?("girb_health_check")
+              health = client.send_command("p :debug_mcp_health_check", timeout: 5)
+              unless health.include?("debug_mcp_health_check")
                 # Process is stuck — try to resume and let the caller reconnect
                 client.send_command_no_wait("c", force: true) rescue nil
                 manager.disconnect(result[:session_id])
@@ -612,11 +612,11 @@ module DebugMcp
         # Uses ||= to avoid double-registration on reconnect.
         # All operations (trap, STDERR.write, exit!) are async-signal-safe.
         def install_sigint_handler(client)
-          handler_code = "$_girb_int_at=0;" \
-            "$_girb_orig_int||=trap('INT'){" \
+          handler_code = "$_debug_mcp_int_at=0;" \
+            "$_debug_mcp_orig_int||=trap('INT'){" \
             "t=Process.clock_gettime(Process::CLOCK_MONOTONIC);" \
-            "if t-$_girb_int_at<3;exit!(1);" \
-            "else;$_girb_int_at=t;" \
+            "if t-$_debug_mcp_int_at<3;exit!(1);" \
+            "else;$_debug_mcp_int_at=t;" \
             "STDERR.write(\"\\nPress Ctrl+C again within 3s to force quit\\n\")end}"
           client.send_command("p begin;#{handler_code};:ok;rescue =>e;e.class.name end")
         rescue DebugMcp::Error

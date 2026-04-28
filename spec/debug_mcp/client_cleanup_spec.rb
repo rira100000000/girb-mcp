@@ -30,7 +30,7 @@ RSpec.describe DebugMcp::ClientCleanup do
       expect(client).to have_received(:send_command)
         .with("delete 1", timeout: anything)
       expect(client).to have_received(:send_command)
-        .with(/\$_girb_orig_int/, timeout: anything)
+        .with(/\$_debug_mcp_orig_int/, timeout: anything)
       expect(client).to have_received(:send_command_no_wait).with("c", force: true).once
     end
 

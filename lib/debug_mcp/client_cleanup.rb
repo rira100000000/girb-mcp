@@ -36,7 +36,7 @@ module DebugMcp
       if remaining > 0
         begin
           client.send_command(
-            "p $_girb_orig_int ? (trap('INT',$_girb_orig_int);$_girb_orig_int=nil;:ok) : nil",
+            "p $_debug_mcp_orig_int ? (trap('INT',$_debug_mcp_orig_int);$_debug_mcp_orig_int=nil;:ok) : nil",
             timeout: [remaining, 2].min,
           )
         rescue DebugMcp::Error

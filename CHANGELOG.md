@@ -5,8 +5,9 @@
 This gem was previously released on RubyGems as `girb-mcp`. It has been renamed to
 `debug-mcp` to better reflect its purpose: an MCP server for Ruby's debug gem.
 
-There are no functional changes from `girb-mcp` 0.1.1. If you used `girb-mcp`,
-simply replace it with `debug-mcp` in your Gemfile and MCP client config:
+The first `debug-mcp` release is **0.1.2** (see entry below for internal-namespace
+changes). If you used `girb-mcp`, replace it with `debug-mcp` in your Gemfile and
+MCP client config:
 
 ```ruby
 # Gemfile
@@ -27,8 +28,33 @@ gem "debug-mcp"  # was: gem "girb-mcp"
 
 The executable `girb-rails` was likewise renamed to `debug-rails`.
 
-The version history below (0.1.0, 0.1.1) was originally published under the name
-`girb-mcp`; the implementation is unchanged.
+The version history for 0.1.0 and 0.1.1 below was originally published under the
+name `girb-mcp`; the implementation is unchanged.
+
+## 0.1.2 — 2026-04-28
+
+First release under the `debug-mcp` name.
+
+### Changes
+
+- **Rename internal namespace from `girb` to `debug_mcp`** — Globals, symbols, and
+  log paths injected into the debugged Ruby process are now namespaced with
+  `debug_mcp` to match the gem name:
+  - `$_girb_orig_int`, `$_girb_int_at` → `$_debug_mcp_orig_int`, `$_debug_mcp_int_at`
+    (SIGINT trap save/restore)
+  - `$__girb_err`, `$__girb_cap` → `$__debug_mcp_err`, `$__debug_mcp_cap`
+    (`evaluate_code` error capture and stdout redirect)
+  - `:girb_health_check` → `:debug_mcp_health_check` (force_reset health probe)
+  - `/tmp/girb_debug.log` → `/tmp/debug_mcp.log` (internal debug log)
+
+  This is internal to debug-mcp and does not change any public API. If you wrote
+  Ruby code that read these globals from the debugged process directly, update
+  the names accordingly.
+
+- **Add `base64` runtime dependency** — `base64` was removed from Ruby's default
+  gems in 3.4.0. `debug-mcp` uses `Base64.strict_encode64` to safely transmit
+  multi-line / non-ASCII code over the debug gem's line-based protocol, so it is
+  now declared explicitly in the gemspec to avoid `LoadError` on Ruby 3.4+.
 
 ## 0.1.1 — 2026-03-01
 
