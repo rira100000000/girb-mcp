@@ -1,12 +1,12 @@
-# girb-mcp
+# debug-mcp
 
-LLMエージェントが実行中のRubyプロセスの実行時コンテキストにアクセスするためのMCP (Model Context Protocol) サーバーです。
+LLMエージェントをRubyの[debug gem](https://github.com/ruby/debug)に接続し、停止中のRubyプロセスの実行時コンテキストへのアクセスを提供するMCP (Model Context Protocol) サーバーです。
 
 LLMエージェントが、停止中のRubyプロセスに接続し、変数の調査・コード評価・ブレークポイント設定・実行制御をMCPツール呼び出しだけで完結できます。MCP対応クライアントであれば何でも利用可能です。
 
 ## できること
 
-既存のRuby/Rails向けMCPサーバーは静的解析やアプリケーションレベルのAPIにとどまっています。girb-mcpはdebug gem経由で**実行中のRubyプロセス**に接続し、その実行時状態をLLMエージェントに公開します。
+既存のRuby/Rails向けMCPサーバーは静的解析やアプリケーションレベルのAPIにとどまっています。debug-mcpはdebug gem経由で**実行中のRubyプロセス**に接続し、その実行時状態をLLMエージェントに公開します。
 
 ```
 Agent → connect(host: "localhost", port: 12345)
@@ -22,13 +22,13 @@ Agent → continue_execution()
 ## インストール
 
 ```ruby
-gem "girb-mcp"
+gem "debug-mcp"
 ```
 
 または直接インストール：
 
 ```
-gem install girb-mcp
+gem install debug-mcp
 ```
 
 Ruby >= 3.2.0が必要です。
@@ -50,7 +50,7 @@ rdbg --open my_script.rb
 
 ### 2. MCPクライアントの設定
 
-girb-mcpはMCP対応クライアントであれば何でも動作します。お使いのクライアントのMCPサーバー設定に追加してください：
+debug-mcpはMCP対応クライアントであれば何でも動作します。お使いのクライアントのMCPサーバー設定に追加してください：
 
 #### Claude Code
 
@@ -59,8 +59,8 @@ girb-mcpはMCP対応クライアントであれば何でも動作します。お
 ```json
 {
   "mcpServers": {
-    "girb-mcp": {
-      "command": "girb-mcp",
+    "debug-mcp": {
+      "command": "debug-mcp",
       "args": []
     }
   }
@@ -72,9 +72,9 @@ Bundler経由の場合：
 ```json
 {
   "mcpServers": {
-    "girb-mcp": {
+    "debug-mcp": {
       "command": "bundle",
-      "args": ["exec", "girb-mcp"]
+      "args": ["exec", "debug-mcp"]
     }
   }
 }
@@ -87,8 +87,8 @@ Bundler経由の場合：
 ```json
 {
   "mcpServers": {
-    "girb-mcp": {
-      "command": "girb-mcp",
+    "debug-mcp": {
+      "command": "debug-mcp",
       "args": []
     }
   }
@@ -100,9 +100,9 @@ Bundler経由の場合：
 ```json
 {
   "mcpServers": {
-    "girb-mcp": {
+    "debug-mcp": {
       "command": "bundle",
-      "args": ["exec", "girb-mcp"]
+      "args": ["exec", "debug-mcp"]
     }
   }
 }
@@ -119,7 +119,7 @@ Bundler経由の場合：
 ## 使い方
 
 ```
-Usage: girb-mcp [options]
+Usage: debug-mcp [options]
     -t, --transport TRANSPORT        トランスポート: stdio（デフォルト）または http
     -p, --port PORT                  HTTPポート（デフォルト: 6029、httpトランスポート時のみ）
         --host HOST                  HTTPホスト（デフォルト: 127.0.0.1、httpトランスポート時のみ）
@@ -133,7 +133,7 @@ Usage: girb-mcp [options]
 標準的なMCPクライアント向け。追加設定は不要です。
 
 ```bash
-girb-mcp
+debug-mcp
 ```
 
 ### HTTPトランスポート（Streamable HTTP）
@@ -141,7 +141,7 @@ girb-mcp
 ブラウザベースのクライアントやHTTP対応MCPクライアント向け。
 
 ```bash
-girb-mcp --transport http --port 8080
+debug-mcp --transport http --port 8080
 ```
 
 MCPエンドポイントは `http://127.0.0.1:8080/mcp` で利用可能になります。
@@ -151,7 +151,7 @@ MCPエンドポイントは `http://127.0.0.1:8080/mcp` で利用可能になり
 デバッグセッションは30分間操作がないと自動的にクリーンアップされます。変更するには：
 
 ```bash
-girb-mcp --session-timeout 3600  # 1時間
+debug-mcp --session-timeout 3600  # 1時間
 ```
 
 セッションマネージャーは、対象プロセスが終了したセッションも検出して自動的にクリーンアップします。
@@ -253,12 +253,12 @@ Agent: continue_execution()
 
 ### Railsリクエストのデバッグ
 
-`girb-rails` でデバッグ有効状態のRailsサーバーを起動：
+`debug-rails` でデバッグ有効状態のRailsサーバーを起動：
 
 ```bash
-girb-rails                # RUBY_DEBUG_OPEN=true bin/rails server と同等
-girb-rails s -p 4000      # ポート指定
-girb-rails --debug-port 3333  # TCPデバッグポートを指定（Docker内で便利）
+debug-rails                # RUBY_DEBUG_OPEN=true bin/rails server と同等
+debug-rails s -p 4000      # ポート指定
+debug-rails --debug-port 3333  # TCPデバッグポートを指定（Docker内で便利）
 ```
 
 エージェントにデバッグを依頼：
@@ -340,39 +340,34 @@ Agent: get_context()
 
 ```
 ┌──────────────┐ STDIO or Streamable HTTP ┌───────────┐    TCP/Unixソケット   ┌──────────────┐
-│ MCPクライアント │ ◄──────────────────────► │ girb-mcp  │ ◄──────────────────► │ Rubyプロセス  │
+│ MCPクライアント │ ◄──────────────────────► │ debug-mcp  │ ◄──────────────────► │ Rubyプロセス  │
 │              │       (JSON-RPC)         │(MCPサーバー) │  debug gemプロトコル  │  (rdbg)      │
 └──────────────┘                           └───────────┘                      └──────────────┘
 ```
 
-1. girb-mcpはSTDIO（デフォルト）またはStreamable HTTPで通信するMCPサーバーとして動作
+1. debug-mcpはSTDIO（デフォルト）またはStreamable HTTPで通信するMCPサーバーとして動作
 2. debug gem（`rdbg --open`）が対象Rubyプロセスにソケットを公開
-3. girb-mcpがdebug gemのワイヤープロトコルでそのソケットに接続
+3. debug-mcpがdebug gemのワイヤープロトコルでそのソケットに接続
 4. MCPツール呼び出しがデバッガコマンドに変換され、結果が返される
 5. アイドル状態のセッションは設定可能なタイムアウト後に自動クリーンアップされる
 
 ## セキュリティ
 
-girb-mcpはデバッグツールであり、実行中のRubyプロセスへの深いランタイムアクセスを提供します。
+debug-mcpはデバッグツールであり、実行中のRubyプロセスへの深いランタイムアクセスを提供します。
 
 **専用ツールにより任意コード実行を最小化。** 変数の確認・ソースコードの閲覧・モデル構造の調査など、ほとんどのデバッグ操作は任意コードを実行しない専用ツールで行われます。ランタイム検査用に`evaluate_code`も利用可能で、危険な操作に対しては組み込みの安全性チェッカーが警告します。
 
 **debug gemには認証機能がありません。** デバッグソケットにアクセスできれば、対象プロセスで任意のコードを実行できます。必ずlocalhost（`127.0.0.1`）にバインドするか、Unixソケットを使用してください。具体的な設定例は[Docker節](#docker内のrailsアプリをデバッグ)を参照してください。
 
-## girbファミリー
+## 関連プロジェクト
 
-girb-mcpは[girb](https://github.com/rira100000000/girb)ファミリーの一員です：
-
-- **girb** — AI搭載IRBアシスタント（対話型、人間向け）
-- **girb-mcp** — LLMエージェント向けMCPサーバー（プログラマティック、エージェント向け）
-- **girb-ruby_llm** — ruby_llm経由のLLMプロバイダー
-- **girb-gemini** — Gemini API経由のLLMプロバイダー
+- [girb](https://github.com/rira100000000/girb) — 同じ思想を共有する、人間向けのAI搭載IRBアシスタント
 
 ## 開発
 
 ```bash
-git clone https://github.com/rira100000000/girb-mcp.git
-cd girb-mcp
+git clone https://github.com/rira100000000/debug-mcp.git
+cd debug-mcp
 bundle install
 ```
 

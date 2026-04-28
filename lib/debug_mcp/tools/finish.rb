@@ -1,0 +1,84 @@
+# frozen_string_literal: true
+
+require "mcp"
+
+module DebugMcp
+  module Tools
+    class Finish < MCP::Tool
+      description "[Control] Run until the current method or block returns, then pause. " \
+                  "After finish, execution stops at the CALLER's frame (the line that invoked the method). " \
+                  "The line shown with => has already been executed. " \
+                  "This exits the current block/method entirely — for iterators like each/map, " \
+                  "this skips ALL remaining iterations. " \
+                  "To skip to just the NEXT ITERATION instead, use set_breakpoint with one_shot: true " \
+                  "on the first line of the block body, then continue_execution."
+
+      annotations(
+        title: "Finish Method/Block",
+        read_only_hint: false,
+        destructive_hint: false,
+        open_world_hint: false,
+      )
+
+      input_schema(
+        properties: {
+          session_id: {
+            type: "string",
+            description: "Debug session ID (uses default session if omitted)",
+          },
+        },
+      )
+
+      class << self
+        def call(session_id: nil, server_context:)
+          client = server_context[:session_manager].client(session_id)
+
+          output = client.send_command("finish", timeout: DebugClient::CONTINUE_TIMEOUT)
+
+          if output.strip.empty? && client.process_finished?
+            text = DebugMcp::ExitMessageBuilder.build_exit_message(
+              "Program exited during finish.", output, client,
+            )
+            return MCP::Tool::Response.new([{ type: "text", text: text }])
+          end
+
+          client.cleanup_one_shot_breakpoints(output)
+          output = DebugMcp::StopEventAnnotator.annotate_breakpoint_hit(output)
+          output = DebugMcp::StopEventAnnotator.enrich_stop_context(output, client)
+
+          location = parse_stop_location(output)
+          header = if location
+            "Method/block returned. Now at: #{location}"
+          else
+            "Method/block returned (stopped at caller's frame)."
+          end
+          MCP::Tool::Response.new([{ type: "text", text: "#{header}\n\n#{output}" }])
+        rescue DebugMcp::SessionError => e
+          text = if e.message.include?("session ended") || e.message.include?("finished execution")
+            DebugMcp::ExitMessageBuilder.build_exit_message("Program exited during finish.", e.final_output, client)
+          else
+            "Error: #{e.message}"
+          end
+          MCP::Tool::Response.new([{ type: "text", text: text }])
+        rescue DebugMcp::ConnectionError => e
+          text = if e.message.include?("Connection lost") || e.message.include?("connection closed")
+            DebugMcp::ExitMessageBuilder.build_exit_message("Program exited during finish.", e.final_output, client)
+          else
+            "Error: #{e.message}"
+          end
+          MCP::Tool::Response.new([{ type: "text", text: text }])
+        rescue DebugMcp::Error => e
+          MCP::Tool::Response.new([{ type: "text", text: "Error: #{e.message}" }])
+        end
+
+        private
+
+        def parse_stop_location(output)
+          # Debug gem output: "=>#0  Class#method at /path/to/file.rb:10"
+          match = output&.match(/=>#\d+\s+.+\s+at\s+(.+:\d+)/)
+          match ? match[1] : nil
+        end
+      end
+    end
+  end
+end

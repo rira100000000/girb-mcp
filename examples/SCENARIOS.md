@@ -1,16 +1,16 @@
-# girb-mcp デバッグ実験シナリオ
+# debug-mcp デバッグ実験シナリオ
 
 ## 準備
 
-Claude Codeの設定に girb-mcp を追加する（まだの場合）：
+Claude Codeの設定に debug-mcp を追加する（まだの場合）：
 
 ```json
 {
   "mcpServers": {
-    "girb-mcp": {
+    "debug-mcp": {
       "command": "bundle",
-      "args": ["exec", "girb-mcp"],
-      "cwd": "/home/rira/rira100000000/girb/girb-mcp"
+      "args": ["exec", "debug-mcp"],
+      "cwd": "/home/rira/rira100000000/girb/debug-mcp"
     }
   }
 }
@@ -27,7 +27,7 @@ Claude Codeの設定に girb-mcp を追加する（まだの場合）：
 ### 起動
 
 ```bash
-cd /home/rira/rira100000000/girb/girb-mcp
+cd /home/rira/rira100000000/girb/debug-mcp
 rdbg --open --port=12345 --nonstop -- examples/01_simple_bug.rb
 ```
 

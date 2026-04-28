@@ -1,5 +1,35 @@
 # Changelog
 
+## Renamed: `girb-mcp` → `debug-mcp` (2026-04-28)
+
+This gem was previously released on RubyGems as `girb-mcp`. It has been renamed to
+`debug-mcp` to better reflect its purpose: an MCP server for Ruby's debug gem.
+
+There are no functional changes from `girb-mcp` 0.1.1. If you used `girb-mcp`,
+simply replace it with `debug-mcp` in your Gemfile and MCP client config:
+
+```ruby
+# Gemfile
+gem "debug-mcp"  # was: gem "girb-mcp"
+```
+
+```json
+// MCP client config
+{
+  "mcpServers": {
+    "debug-mcp": {                // was: "girb-mcp"
+      "command": "debug-mcp",     // was: "girb-mcp"
+      "args": []
+    }
+  }
+}
+```
+
+The executable `girb-rails` was likewise renamed to `debug-rails`.
+
+The version history below (0.1.0, 0.1.1) was originally published under the name
+`girb-mcp`; the implementation is unchanged.
+
 ## 0.1.1 — 2026-03-01
 
 ### Bug Fixes
@@ -24,4 +54,4 @@ Initial release.
 - **Signal trap context handling**: auto-escape on connect and after trigger_request
 - **Code safety checker**: warns about dangerous operations in evaluate_code
 - **Session management**: multiple concurrent sessions with automatic timeout cleanup
-- **girb-rails CLI**: launch Rails server with debug enabled in one command
+- **debug-rails CLI**: launch Rails server with debug enabled in one command

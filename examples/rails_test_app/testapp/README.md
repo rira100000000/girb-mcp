@@ -1,6 +1,6 @@
-# Rails Test App for girb-mcp
+# Rails Test App for debug-mcp
 
-girb-mcpの動作検証用Railsアプリケーション。ローカルでもDockerでも実行可能。
+debug-mcpの動作検証用Railsアプリケーション。ローカルでもDockerでも実行可能。
 
 ## ローカル実行
 
@@ -10,7 +10,7 @@ bin/rails db:prepare
 RUBY_DEBUG_OPEN=true bin/rails server
 ```
 
-girb-mcpから接続:
+debug-mcpから接続:
 ```
 connect          # Unix socketで自動検出
 ```
@@ -26,7 +26,7 @@ docker compose up --build
 curl http://localhost:3000/health
 ```
 
-girb-mcpから接続:
+debug-mcpから接続:
 ```
 connect(host: "localhost", port: 12345)
 ```

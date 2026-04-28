@@ -1,18 +1,18 @@
 #!/bin/bash
-# girb-mcp Rails テスト用アプリのセットアップスクリプト
+# debug-mcp Rails テスト用アプリのセットアップスクリプト
 #
 # 使い方:
 #   cd examples/rails_test_app
 #   bash setup.sh
 #
-# これにより、girb-mcpのRailsツールをテストするための
+# これにより、debug-mcpのRailsツールをテストするための
 # 最小限のRailsアプリケーションが生成されます。
 
 set -e
 
 APP_DIR="$(cd "$(dirname "$0")" && pwd)/testapp"
 
-echo "=== girb-mcp Rails テストアプリ セットアップ ==="
+echo "=== debug-mcp Rails テストアプリ セットアップ ==="
 echo ""
 
 # 既存のアプリがあれば確認
@@ -50,7 +50,7 @@ cd "$APP_DIR"
 
 # debug gem を追加
 echo "" >> Gemfile
-echo '# girb-mcp テスト用' >> Gemfile
+echo '# debug-mcp テスト用' >> Gemfile
 echo 'gem "debug"' >> Gemfile
 bundle install --quiet
 
@@ -421,7 +421,7 @@ echo "テストアプリの起動方法:"
 echo "  cd $APP_DIR"
 echo "  RUBY_DEBUG_OPEN=true bin/rails server -p 3999"
 echo ""
-echo "girb-mcpからの接続:"
+echo "debug-mcpからの接続:"
 echo "  1. connect で Rails プロセスに接続"
 echo "  2. rails_info でアプリ概要を確認"
 echo "  3. 詳しいシナリオは examples/RAILS_SCENARIOS.md を参照"

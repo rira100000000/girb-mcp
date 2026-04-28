@@ -1,7 +1,7 @@
 # frozen_string_literal: true
 
 require "set"
-require "girb_mcp"
+require "debug_mcp"
 
 RSpec.configure do |config|
   config.expect_with :rspec do |expectations|
@@ -21,7 +21,7 @@ end
 
 # Helper to build a mock DebugClient
 def build_mock_client(connected: true, pid: "12345", paused: true, trap_context: false, remote: false, port: nil)
-  client = instance_double(GirbMcp::DebugClient,
+  client = instance_double(DebugMcp::DebugClient,
     connected?: connected,
     pid: pid,
     paused: paused,
@@ -67,7 +67,7 @@ end
 # Helper to build a mock SessionManager
 def build_mock_manager(client: nil)
   client ||= build_mock_client
-  manager = instance_double(GirbMcp::SessionManager)
+  manager = instance_double(DebugMcp::SessionManager)
   allow(manager).to receive(:client).and_return(client)
   allow(manager).to receive(:record_breakpoint)
   allow(manager).to receive(:clear_breakpoint_specs)

@@ -1,11 +1,11 @@
-# girb-mcp Rails デバッグシナリオ
+# debug-mcp Rails デバッグシナリオ
 
 ## 準備
 
 ### 1. テスト用Railsアプリのセットアップ
 
 ```bash
-cd /home/rira/rira100000000/girb/girb-mcp/examples/rails_test_app
+cd /home/rira/rira100000000/girb/debug-mcp/examples/rails_test_app
 bash setup.sh
 ```
 
@@ -20,15 +20,15 @@ RUBY_DEBUG_OPEN=true bin/rails server -p 3999
 
 `RUBY_DEBUG_OPEN=true` により、debug gem がソケットを開いた状態で起動する。
 
-### 3. girb-mcp の設定
+### 3. debug-mcp の設定
 
 ```json
 {
   "mcpServers": {
-    "girb-mcp": {
+    "debug-mcp": {
       "command": "bundle",
-      "args": ["exec", "girb-mcp"],
-      "cwd": "/home/rira/rira100000000/girb/girb-mcp"
+      "args": ["exec", "debug-mcp"],
+      "cwd": "/home/rira/rira100000000/girb/debug-mcp"
     }
   }
 }
@@ -158,7 +158,7 @@ RUBY_DEBUG_OPEN=true bin/rails server -p 3999
 
 **テスト対象:** `trigger_request` のCSRF自動無効化
 
-**背景:** RailsではPOST/PUT/PATCH/DELETEリクエストにCSRFトークンが必要。girb-mcpはこれを自動的に回避する。
+**背景:** RailsではPOST/PUT/PATCH/DELETEリクエストにCSRFトークンが必要。debug-mcpはこれを自動的に回避する。
 
 ### Claude Codeへの指示例
 
